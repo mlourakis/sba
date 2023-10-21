@@ -148,9 +148,17 @@ register int i;
     for(i=0; i<nframes; ++i){
       n=fscanf(fp, "%d%lf%lf", &frameno, projs, projs+1); /* read in image projection */
       if(n!=3){
-        fprintf(stderr, "readPointParamsAndProjections(): error reading image projections from line %d [n=%d]\n", lineno+1, n);
+        fprintf(stderr, "readPointParamsAndProjections(): error reading image projections from line %d [n=%d].\n"
+                        "Line contains fewer than %d projections?\n", lineno+1, n, nframes);
         exit(1);
       }
+
+      if(frameno>=ncams){
+        fprintf(stderr, "readPointParamsAndProjections(): line %d contains an image projection for frame %d "
+                        "but only %d cameras have been specified!\n", lineno+1, frameno, ncams);
+        exit(1);
+      }
+
       projs+=2;
       vmask[ptno*ncams+frameno]=1;
     }

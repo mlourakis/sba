@@ -7,7 +7,7 @@ IF(MSVC)
   ADD_DEFINITIONS(-D_CRT_SECURE_NO_WARNINGS)
 ENDIF(MSVC)
 
-ADD_LIBRARY(sba sba_levmar.c sba_levmar_wrap.c sba_lapack.c sba_crsm.c
+ADD_LIBRARY(sba sba_levmar.c sba_levmar_wrap.c sba_lapack.c sba_crsm.c sba_chkjac.c
 )
 
 OPTION(BUILD_DEMO "Build demo programs?" TRUE)

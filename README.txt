@@ -1,6 +1,6 @@
     **************************************************************
                                  SBA 
-                              version 1.1
+                              version 1.2
                           By Manolis Lourakis
 
                      Institute of Computer Science
@@ -46,13 +46,18 @@ the above TR:
 ==================== FILES ====================
 sba_levmar.c: SBA expert driver routines
 sba_levmar_wrap.c: simple wrappers around the routines in sba_levmar.c
-sba_lapack: LAPACK-based linear system solvers (LU, QR, SVD, Cholesky, Bunch-Kaufman)
+sba_lapack.c: LAPACK-based linear system solvers (LU, QR, SVD, Cholesky, Bunch-Kaufman)
 sba_crsm.c: CRS sparse matrix manipulation routines
+sba_chkjac.c: routines for verifying the correctness of user-supplied jacobians
 sba.h: Function prototypes & related data structures
 demo/*: Euclidean BA demo; see demo/README.txt for more details
 
 ==================== COMPILING ====================
-Typing "make" will build both sba and the demo program.
+ - On a Linux/Unix system, typing "make" will build both sba and the demo program.
+
+ - Under Windows and if Visual C is installed & configured for command line use,
+   type "nmake /f Makefile.vc" in a cmd window to build sba and the demo program.
+   In case of trouble, read the comments on top of Makefile.vc
 
 
 Send your comments/bug reports to lourakis@ics.forth.gr

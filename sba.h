@@ -27,14 +27,14 @@ extern "C" {
 #define SBA_MIN_DELTA     1E-06 // finite differentiation minimum delta
 #define SBA_DELTA_SCALE   1E-04 // finite differentiation delta scale
 
-#define SBA_OPTSSZ        3
+#define SBA_OPTSSZ        4
 #define SBA_INFOSZ        10
 #define SBA_INIT_MU       1E-03
 #define SBA_STOP_THRESH   1E-12
 #define SBA_CG_NOPREC     0
 #define SBA_CG_JACOBI     1
 #define SBA_CG_SSOR       2
-#define SBA_VERSION       "1.1 (Dec. 2004)"
+#define SBA_VERSION       "1.2 (Nov. 2005)"
 
 
 /* Sparse matrix representation using Compressed Row Storage (CRS) format.
@@ -107,8 +107,6 @@ extern int sba_mat_invert_Chol(double *A, double *B, int m);
 /* CRS sparse matrices manipulation routines */
 extern void sba_crsm_alloc(struct sba_crsm *sm, int nr, int nc, int nnz);
 extern void sba_crsm_free(struct sba_crsm *sm);
-extern void sba_crsm_print(struct sba_crsm *sm, FILE *fp);
-extern void sba_crsm_build(struct sba_crsm *sm, int *m, int nr, int nc);
 extern int sba_crsm_elmidx(struct sba_crsm *sm, int i, int j);
 extern int sba_crsm_row_elmidxs(struct sba_crsm *sm, int i, int *vidxs, int *jidxs);
 extern int sba_crsm_col_elmidxs(struct sba_crsm *sm, int j, int *vidxs, int *iidxs);

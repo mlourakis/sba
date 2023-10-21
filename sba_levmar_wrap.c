@@ -640,11 +640,11 @@ int sba_motstr_levmar(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to proj, projac */ 
 
-    int itmax,         /* I: maximum number of iterations */
+    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
     int verbose,       /* I: verbosity */
     double opts[SBA_OPTSSZ],
 	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stoping thresholds for ||J^T e||_inf and ||dp||_2
+                        * stoping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -655,6 +655,8 @@ int sba_motstr_levmar(
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
                         *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 5 - too many attempts to increase damping. Restart with increased mu
+                        *                                 6 - stopped by small ||e||_2
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
@@ -729,11 +731,11 @@ int sba_mot_levmar(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to proj, projac */ 
 
-    int itmax,         /* I: maximum number of iterations */
+    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
     int verbose,       /* I: verbosity */
     double opts[SBA_OPTSSZ],
 	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stoping thresholds for ||J^T e||_inf and ||dp||_2
+                        * stoping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -744,6 +746,8 @@ int sba_mot_levmar(
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
                         *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 5 - too many attempts to increase damping. Restart with increased mu
+                        *                                 6 - stopped by small ||e||_2
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
@@ -814,11 +818,11 @@ int sba_str_levmar(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to proj, projac */ 
 
-    int itmax,         /* I: maximum number of iterations */
+    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
     int verbose,       /* I: verbosity */
     double opts[SBA_OPTSSZ],
 	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stoping thresholds for ||J^T e||_inf and ||dp||_2
+                        * stoping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -829,6 +833,8 @@ int sba_str_levmar(
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
                         *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 5 - too many attempts to increase damping. Restart with increased mu
+                        *                                 6 - stopped by small ||e||_2
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error

@@ -22,6 +22,9 @@
 
 #include "sba.h"
 
+static void sba_crsm_print(struct sba_crsm *sm, FILE *fp);
+static void sba_crsm_build(struct sba_crsm *sm, int *m, int nr, int nc);
+
 /* allocate a sparse CRS matrix */
 void sba_crsm_alloc(struct sba_crsm *sm, int nr, int nc, int nnz)
 {
@@ -48,7 +51,7 @@ void sba_crsm_free(struct sba_crsm *sm)
   sm->val=sm->colidx=sm->rowptr=NULL;
 }
 
-void sba_crsm_print(struct sba_crsm *sm, FILE *fp)
+static void sba_crsm_print(struct sba_crsm *sm, FILE *fp)
 {
 register int i;
 
@@ -65,7 +68,7 @@ register int i;
 }
 
 /* build a sparse CRS matrix from a dense one. intended to serve as an example for sm creation */
-void sba_crsm_build(struct sba_crsm *sm, int *m, int nr, int nc)
+static void sba_crsm_build(struct sba_crsm *sm, int *m, int nr, int nc)
 {
 int nnz;
 register int i, j, k;

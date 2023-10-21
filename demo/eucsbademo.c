@@ -433,6 +433,8 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname)
 
   /* call sparse LM routine */
   opts[0]=SBA_INIT_MU; opts[1]=SBA_TERMINATION_THRESH; opts[2]=SBA_TERMINATION_THRESH;
+  opts[3]=SBA_TERMINATION_THRESH;
+  //opts[3]=0.05*numprojs; // uncomment to force termination if the average reprojection error drops below 0.05
 
   /* Notice the various BA options demonstrated below */
 
@@ -530,7 +532,7 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname)
   fprintf(stdout, "\nMethod %s, %s driver, %s jacobian\n\n", howtoname[howto],
                   expert? "expert" : "simple",
                   analyticjac? "analytic" : "approximate");
-  fprintf(stdout, "SBA returned %d in %g iter, reason %g, error %g [initial %g]\n", n, info[5], info[6], info[1]/numprojs, info[0]/numprojs);
+  fprintf(stdout, "SBA returned %d in %g iter, reason %g, error %g [initial %g], %d/%d func/fjac evals, %d lin. systems\n", n, info[5], info[6], info[1]/numprojs, info[0]/numprojs, (int)info[7], (int)info[8], (int)info[9]);
   fprintf(stdout, "Elapsed time: %.2lf seconds, %.2lf msecs\n", ((double) (end_time - start_time)) / CLOCKS_PER_SEC,
                   ((double) (end_time - start_time)) / CLOCKS_PER_MSEC);
   fflush(stdout);

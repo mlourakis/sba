@@ -25,6 +25,7 @@
 #include <float.h>
 
 #include "sba.h"
+#include "sba_chkjac.h"
 
 #define SBA_EPSILON       1E-12
 #define SBA_EPSILON_SQ    ( (SBA_EPSILON)*(SBA_EPSILON) )
@@ -64,6 +65,83 @@ struct fdj_data_x_ {
   void *adata;
 };
 
+/* auxiliary memory allocation routine with error checking */
+inline static void *emalloc_(char *file, int line, size_t sz)
+{
+void *ptr;
+
+  ptr=(void *)malloc(sz);
+  if(ptr==NULL){
+    fprintf(stderr, "memory allocation request for %u bytes failed in file %s, line %d, exiting", sz, file, line);
+    exit(1);
+  }
+
+  return ptr;
+}
+
+/* auxiliary routine for computing the mean reprojection error; used for debugging */
+static double sba_mean_repr_error(int n, int mnp, double *x, double *hx, struct sba_crsm *idxij, int *rcidxs, int *rcsubs)
+{
+register int i, j;
+int nnz, nprojs;
+double *ptr1, *ptr2;
+double err;
+
+  for(i=nprojs=0, err=0.0; i<n; ++i){
+    nnz=sba_crsm_row_elmidxs(idxij, i, rcidxs, rcsubs); /* find nonzero x_ij, j=0...m-1 */
+    nprojs+=nnz;
+    for(j=0; j<nnz; ++j){ /* point i projecting on camera rcsubs[j] */
+      ptr1=x + idxij->val[rcidxs[j]]*mnp;
+      ptr2=hx + idxij->val[rcidxs[j]]*mnp;
+
+      err+=sqrt((ptr1[0]-ptr2[0])*(ptr1[0]-ptr2[0]) + (ptr1[1]-ptr2[1])*(ptr1[1]-ptr2[1]));
+    }
+  }
+
+  return err/((double)(nprojs));
+}
+
+/* print the solution in p using sba's text format. If cnp/pnp==0 only points/cameras are printed */
+static void sba_print_sol(int n, int m, double *p, int cnp, int pnp, double *x, int mnp, struct sba_crsm *idxij, int *rcidxs, int *rcsubs)
+{
+register int i, j, ii;
+int nnz;
+double *ptr;
+
+  if(cnp){
+    /* print camera parameters */
+    for(j=0; j<m; ++j){
+      ptr=p+cnp*j;
+      for(ii=0; ii<cnp; ++ii)
+        printf("%g ", ptr[ii]);
+      printf("\n");
+    }
+  }
+
+  if(pnp){
+    /* 3D & 2D point parameters */
+    printf("\n\n\n# X Y Z  nframes  frame0 x0 y0  frame1 x1 y1 ...\n");
+    for(i=0; i<n; ++i){
+      ptr=p+cnp*m+i*pnp;
+      for(ii=0; ii<pnp; ++ii) // print 3D coordinates
+        printf("%g ", ptr[ii]);
+
+      nnz=sba_crsm_row_elmidxs(idxij, i, rcidxs, rcsubs); /* find nonzero x_ij, j=0...m-1 */
+      printf("%d ", nnz);
+
+      for(j=0; j<nnz; ++j){ /* point i projecting on camera rcsubs[j] */
+        ptr=x + idxij->val[rcidxs[j]]*mnp;
+
+        printf("%d ", rcsubs[j]);
+        for(ii=0; ii<mnp; ++ii) // print 2D coordinates
+          printf("%g ", ptr[ii]);
+      }
+      printf("\n");
+    }
+  }
+}
+
+
 /* Given a parameter vector p made up of the 3D coordinates of n points and the parameters of m cameras, compute in
  * jac the jacobian of the predicted measurements, i.e. the jacobian of the projections of 3D points in the m images.
  * The jacobian is approximated with the aid of finite differences and is returned in the order
@@ -73,8 +151,29 @@ struct fdj_data_x_ {
  *
  * Problem-specific information is assumed to be stored in a structure pointed to by "dat".
  *
- * NOTE: This function is provided mainly for illustration purposes; in case that execution time is a concern,
- * the jacobian should be computed analytically
+ * NOTE: The jacobian (for n=4, m=3) in matrix form has the following structure:
+ *       A_11  0     0     B_11 0    0    0
+ *       0     A_12  0     B_12 0    0    0
+ *       0     0     A_13  B_13 0    0    0
+ *       A_21  0     0     0    B_21 0    0
+ *       0     A_22  0     0    B_22 0    0
+ *       0     0     A_23  0    B_23 0    0
+ *       A_31  0     0     0    0    B_31 0
+ *       0     A_32  0     0    0    B_32 0
+ *       0     0     A_33  0    0    B_33 0
+ *       A_41  0     0     0    0    0    B_41
+ *       0     A_42  0     0    0    0    B_42
+ *       0     0     A_43  0    0    0    B_43
+ *       To reduce the total number of objective function evaluations, this structure can be
+ *       exploited as follows: A certain d is added to the j-th parameters of all cameras and
+ *       the objective function is evaluated at the resulting point. This evaluation suffices
+ *       to compute the corresponding columns of *all* A_ij through finite differences. A similar
+ *       strategy allows the computation of the B_ij. Overall, only cnp+pnp+1 objective function
+ *       evaluations are needed to compute the jacobian, much fewer compared to the m*cnp+n*pnp+1
+ *       that would be required by the naive strategy of computing one column of the jacobian
+ *       per function evaluation. See Nocedal-Wright, ch. 7, pp. 169. Although this approach is
+ *       much faster compared to the naive strategy, it is not preferable to analytic jacobians,
+ *       since the latter are considerably faster to compute and result in fewer LM iterations.
  */
 static void sba_fdjac_x(
     double *p,                /* I: current parameter estimate, (m*cnp+n*pnp)x1 */
@@ -87,9 +186,9 @@ static void sba_fdjac_x(
   register int i, j, ii, jj;
   double *pa, *pb, *pqr, *ppt, *jaca, *jacb;
   register double *pAB, *phx, *phxx;
-  int n, m, nnz, Asz, Bsz, idx;
+  int n, m, nm, nnz, Asz, Bsz, idx;
 
-  double tmp;
+  double *tmpd;
   register double d;
 
   struct fdj_data_x_ *fdjd;
@@ -112,42 +211,38 @@ static void sba_fdjac_x(
   Asz=mnp*cnp; Bsz=mnp*pnp;
   jaca=jac; jacb=jac+idxij->nnz*Asz;
 
+  nm=(n>=m)? n : m; // max(n, m);
+  tmpd=(double *)emalloc(nm*sizeof(double));
+
   (*func)(p, idxij, fdjd->func_rcidxs, fdjd->func_rcsubs, hx, adata); // evaluate supplied function on current solution
 
   if(cnp){ // is motion varying?
     /* compute A_ij */
-    for(j=0; j<m; ++j){
-      pqr=pa+j*cnp; // j-th camera parameters
-
-      nnz=sba_crsm_col_elmidxs(idxij, j, rcidxs, rcsubs); /* find nonzero A_ij, i=0...n-1 */
-      for(jj=0; jj<cnp; ++jj){
+    for(jj=0; jj<cnp; ++jj){
+      for(j=0; j<m; ++j){
+        pqr=pa+j*cnp; // j-th camera parameters
         /* determine d=max(SBA_DELTA_SCALE*|pqr[jj]|, SBA_MIN_DELTA), see HZ */
         d=(double)(SBA_DELTA_SCALE)*pqr[jj]; // force evaluation
         d=FABS(d);
         if(d<SBA_MIN_DELTA) d=SBA_MIN_DELTA;
 
-        tmp=pqr[jj];
+        tmpd[j]=d;
         pqr[jj]+=d;
+      }
 
-        /* Notice that the following computation is VERY inefficient: 
-         * Although a single camera parameter has been changed, it
-         * evaluates all image projections for all cameras. This could
-         * be avoided if more information regarding "func" was available.
-         * For example, if we had "Q" we could evaluate only the affected
-         * image projections
-         */
-        (*func)(p, idxij, fdjd->func_rcidxs, fdjd->func_rcsubs, hxx, adata);
+      (*func)(p, idxij, fdjd->func_rcidxs, fdjd->func_rcsubs, hxx, adata);
 
-        pqr[jj]=tmp; /* restore */
-        d=1.0/d; /* invert so that divisions can be carried out faster as multiplications */
+      for(j=0; j<m; ++j){
+        pqr=pa+j*cnp; // j-th camera parameters
+        pqr[jj]-=tmpd[j]; /* restore */
+        d=1.0/tmpd[j]; /* invert so that divisions can be carried out faster as multiplications */
 
+        nnz=sba_crsm_col_elmidxs(idxij, j, rcidxs, rcsubs); /* find nonzero A_ij, i=0...n-1 */
         for(i=0; i<nnz; ++i){
           idx=idxij->val[rcidxs[i]];
           phx=hx + idx*mnp; // set phx to point to hx_ij
           phxx=hxx + idx*mnp; // set phxx to point to hxx_ij
           pAB=jaca + idx*Asz; // set pAB to point to A_ij
-
-          //ppt=pb + rcsubs[i]*pnp; // i-th point parameters
 
           for(ii=0; ii<mnp; ++ii)
             pAB[ii*cnp+jj]=(phxx[ii]-phx[ii])*d;
@@ -158,38 +253,31 @@ static void sba_fdjac_x(
 
   if(pnp){ // is structure varying?
     /* compute B_ij */
-    for(i=0; i<n; ++i){
-      ppt=pb+i*pnp; // i-th point parameters
-
-      nnz=sba_crsm_row_elmidxs(idxij, i, rcidxs, rcsubs); /* find nonzero B_ij, j=0...m-1 */
-      for(jj=0; jj<pnp; ++jj){
+    for(jj=0; jj<pnp; ++jj){
+      for(i=0; i<n; ++i){
+        ppt=pb+i*pnp; // i-th point parameters
         /* determine d=max(SBA_DELTA_SCALE*|ppt[jj]|, SBA_MIN_DELTA), see HZ */
         d=(double)(SBA_DELTA_SCALE)*ppt[jj]; // force evaluation
         d=FABS(d);
         if(d<SBA_MIN_DELTA) d=SBA_MIN_DELTA;
 
-        tmp=ppt[jj];
+        tmpd[i]=d;
         ppt[jj]+=d;
+      }
 
-        /* Notice that the following computation is VERY inefficient: 
-         * Although a single point parameter has been changed, it
-         * evaluates all image projections for all cameras. This could
-         * be avoided if more information regarding "func" was available.
-         * For example, if we had "Q" we could evaluate only the affected
-         * image projections
-         */
-        (*func)(p, idxij, fdjd->func_rcidxs, fdjd->func_rcsubs, hxx, adata);
+      (*func)(p, idxij, fdjd->func_rcidxs, fdjd->func_rcsubs, hxx, adata);
 
-        ppt[jj]=tmp; /* restore */
-        d=1.0/d; /* invert so that divisions can be carried out faster as multiplications */
+      for(i=0; i<n; ++i){
+        ppt=pb+i*pnp; // i-th point parameters
+        ppt[jj]-=tmpd[i]; /* restore */
+        d=1.0/tmpd[i]; /* invert so that divisions can be carried out faster as multiplications */
 
+        nnz=sba_crsm_row_elmidxs(idxij, i, rcidxs, rcsubs); /* find nonzero B_ij, j=0...m-1 */
         for(j=0; j<nnz; ++j){
           idx=idxij->val[rcidxs[j]];
           phx=hx + idx*mnp; // set phx to point to hx_ij
           phxx=hxx + idx*mnp; // set phxx to point to hxx_ij
           pAB=jacb + idx*Bsz; // set pAB to point to B_ij
-
-          //pqr=pa + rcsubs[j]*cnp; // j-th camera parameters
 
           for(ii=0; ii<mnp; ++ii)
             pAB[ii*pnp+jj]=(phxx[ii]-phx[ii])*d;
@@ -197,22 +285,9 @@ static void sba_fdjac_x(
       }
     }
   }
+
+  free(tmpd);
 }
-
-/* auxiliary memory allocation routine with error checking */
-inline static void *emalloc_(char *file, int line, size_t sz)
-{
-void           *ptr;
-
-  ptr=(void *)malloc(sz);
-  if(ptr==NULL){
-    fprintf(stderr, "memory allocation request for %u bytes failed in file %s, line %d, exiting", sz, file, line);
-    exit(1);
-  }
-
-  return ptr;
-}
-
 
 /* Bundle adjustment on camera and structure parameters 
  * using the sparse Levenberg-Marquardt as described in HZ p. 568
@@ -261,11 +336,11 @@ int sba_motstr_levmar_x(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to func, fjac */ 
 
-    int itmax,         /* I: maximum number of iterations */
+    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
     int verbose,       /* I: verbosity */
     double opts[SBA_OPTSSZ],
 	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stopping thresholds for ||J^T e||_inf and ||dp||_2
+                        * stopping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -276,6 +351,8 @@ int sba_motstr_levmar_x(
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
                         *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 5 - stopped by small ||e||_2
+                        *                                 6 - too many attempts to increase damping. Restart with increased mu
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
@@ -283,7 +360,7 @@ int sba_motstr_levmar_x(
 )
 {
 register int i, j, ii, jj, k, l;
-int nvis, nnz;
+int nvis, nnz, retval;
 
 /* The following are work arrays that are dynamically allocated by sba_motstr_levmar_x() */
 double *jac;  /* work array for storing the jacobian, max. size n*m*(mnp*cnp + mnp*pnp) */
@@ -350,9 +427,9 @@ register double mu,  /* damping constant */
                 tmp; /* mainly used in matrix & vector multiplications */
 double p_eL2, eab_inf, pdp_eL2; /* ||e(p)||_2, ||J^T e||_inf, ||e(p+dp)||_2 */
 double p_L2, dp_L2=DBL_MAX, dF, dL;
-double tau=FABS(opts[0]), eps1=FABS(opts[1]), eps2=FABS(opts[2]), eps2_sq=opts[2]*opts[2];
+double tau=FABS(opts[0]), eps1=FABS(opts[1]), eps2=FABS(opts[2]), eps2_sq=opts[2]*opts[2], eps3_sq=opts[3]*opts[3];
 double init_p_eL2;
-int nu=2, stop, nfev, njev=0, nlss=0;
+int nu=2, nu2, stop, nfev, njev=0, nlss=0;
 int nobs, nvars;
 const int mmcon=m-mcon;
 
@@ -447,6 +524,12 @@ void *jac_adata;
     jac_adata=adata;
   }
 
+  if(itmax==0){ /* verify jacobian */
+    sba_motstr_chkjac_x(func, fjac, p, &idxij, rcidxs, rcsubs, mcon, cnp, pnp, mnp, adata, jac_adata);
+    retval=0;
+    goto freemem_and_return;
+  }
+
   /* compute the error vectors e_ij in hx */
   (*func)(p, &idxij, rcidxs, rcsubs, hx, adata); nfev=1;
   /* compute e=x - f(p) and its L2 norm */
@@ -460,6 +543,11 @@ void *jac_adata;
 
   for(itno=stop=0; itno<itmax && !stop; ++itno){
     /* Note that p, e and ||e||_2 have been updated at the previous iteration */
+
+    if(p_eL2<=eps3_sq){ /* error is small */
+      stop=5;
+      break;
+    }
 
     /* compute derivative submatrices A_ij, B_ij */
     (*fjac)(p, &idxij, rcidxs, rcsubs, jac, jac_adata); ++njev;
@@ -764,12 +852,22 @@ if(!(itno%100)){
           ptr1[i]=ptr2[i] - ptr1[i];
       }
 
+#if 0
+      if(verbose>1){ /* count the nonzeros in S */
+        for(i=ii=0; i<mmcon*cnp*mmcon*cnp; ++i)
+          if(S[i]!=0.0) ++ii;
+        printf("\nS sparseness %10g\n", ((double)ii)/(mmcon*cnp*mmcon*cnp));
+
+      }
+#endif
+
       /* solve the linear system S dpa = E to compute the da_j.
        *
        * Note that if MAT_STORAGE==1 S is modified in the following call;
        * this is OK since S is recomputed for each iteration
        */
 	    issolved=sba_Axb_LU(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
+      //issolved=sba_Axb_Chol(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
       //issolved=sba_Axb_QRnoQ(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
       //issolved=sba_Axb_QR(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
 	    //issolved=sba_Axb_SVD(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
@@ -839,6 +937,8 @@ if(!(itno%100)){
        }
 
         (*func)(pdp, &idxij, rcidxs, rcsubs, hx, adata); ++nfev; /* evaluate function at p + dp */
+        if(verbose>1)
+          printf("mean reprojection error %g\n", sba_mean_repr_error(n, mnp, x, hx, &idxij, rcidxs, rcsubs));
         for(i=0, pdp_eL2=0.0; i<nobs; ++i){ /* compute ||e(pdp)||_2 */
           hx[i]=tmp=x[i]-hx[i];
           pdp_eL2+=tmp*tmp;
@@ -850,7 +950,7 @@ if(!(itno%100)){
         dF=p_eL2-pdp_eL2;
 
         if(verbose>1)
-          printf("\ndamping term %12g, gain ratio %10g, errors %10g %10g\n", mu, dL!=0.0? dF/dL : dF/DBL_EPSILON, p_eL2/nvis, pdp_eL2/nvis);
+          printf("\ndamping term %8g, gain ratio %8g, errors %8g / %8g = %g\n", mu, dL!=0.0? dF/dL : dF/DBL_EPSILON, p_eL2/nvis, pdp_eL2/nvis, p_eL2/pdp_eL2);
 
         if(dL>0.0 && dF>0.0){ /* reduction in error, increment is accepted */
           tmp=(2.0*dF/dL-1.0);
@@ -873,7 +973,14 @@ if(!(itno%100)){
        */
 
       mu*=nu;
-      nu*=2;
+      nu2=nu<<1; // 2*nu;
+      if(nu2<=nu){ /* nu has wrapped around (overflown) */
+        fprintf(stderr, "Too many failed attempts to increase the damping factor in sba_motstr_levmar_x()! Singular hessian matrix?\n");
+        //exit(1);
+        stop=6;
+        break;
+      }
+      nu=nu2;
 
       /* restore U, V diagonal entries */
       for(j=mcon; j<m; ++j){
@@ -892,6 +999,20 @@ if(!(itno%100)){
   }
 
   if(itno>=itmax) stop=3;
+
+  /* restore U, V diagonal entries */
+  for(j=mcon; j<m; ++j){
+    ptr1=U + j*Usz; // set ptr1 to point to U_j
+    ptr2=diagU + j*cnp; // set ptr2 to point to diagU_j
+    for(i=0; i<cnp; ++i)
+      ptr1[i*cnp+i]=ptr2[i];
+  }
+  for(i=0; i<n; ++i){
+    ptr1=V + i*Vsz; // set ptr1 to point to V_i
+    ptr2=diagV + i*pnp; // set ptr2 to point to diagV_i
+    for(j=0; j<pnp; ++j)
+     ptr1[j*pnp+j]=ptr2[j];
+  }
 
   if(info){
     info[0]=init_p_eL2;
@@ -916,6 +1037,11 @@ if(!(itno%100)){
     info[9]=nlss;
   }
                                                                
+  //sba_print_sol(n, m, p, cnp, pnp, x, mnp, &idxij, rcidxs, rcsubs);
+  retval=(stop!=4)?  itno : -1;
+
+freemem_and_return: /* NOTE: this point is also reached via a goto! */
+
    /* free whatever was allocated */
   free(jac); free(U); free(V);
   free(V_1); free(e); free(eab);  
@@ -932,7 +1058,7 @@ if(!(itno%100)){
 
   sba_crsm_free(&idxij);
 
-  return (stop!=4)?  itno : -1;
+  return retval;
 }
 
 
@@ -979,11 +1105,11 @@ int sba_mot_levmar_x(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to func, fjac */ 
 
-    int itmax,         /* I: maximum number of iterations */
+    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
     int verbose,       /* I: verbosity */
     double opts[SBA_OPTSSZ],
 	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stopping thresholds for ||J^T e||_inf and ||dp||_2
+                        * stopping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -994,6 +1120,8 @@ int sba_mot_levmar_x(
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
                         *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 5 - stopped by small ||e||_2
+                        *                                 6 - too many attempts to increase damping. Restart with increased mu
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
@@ -1001,7 +1129,7 @@ int sba_mot_levmar_x(
 )
 {
 register int i, j, ii, jj, k;
-int nvis, nnz;
+int nvis, nnz, retval;
 
 /* The following are work arrays that are dynamically allocated by sba_mot_levmar_x() */
 double *jac; /* work array for storing the jacobian, max. size n*m*mnp*cnp */
@@ -1048,9 +1176,9 @@ register double mu,  /* damping constant */
                 tmp; /* mainly used in matrix & vector multiplications */
 double p_eL2, ea_inf, pdp_eL2; /* ||e(p)||_2, ||J^T e||_inf, ||e(p+dp)||_2 */
 double p_L2, dp_L2=DBL_MAX, dF, dL;
-double tau=FABS(opts[0]), eps1=FABS(opts[1]), eps2=FABS(opts[2]), eps2_sq=opts[2]*opts[2];
+double tau=FABS(opts[0]), eps1=FABS(opts[1]), eps2=FABS(opts[2]), eps2_sq=opts[2]*opts[2], eps3_sq=opts[3]*opts[3];
 double init_p_eL2;
-int nu=2, stop, nfev, njev=0, nlss=0;
+int nu=2, nu2, stop, nfev, njev=0, nlss=0;
 int nobs, nvars;
 
 struct fdj_data_x_ fdj_data;
@@ -1120,6 +1248,12 @@ void *jac_adata;
     jac_adata=adata;
   }
 
+  if(itmax==0){ /* verify jacobian */
+    sba_mot_chkjac_x(func, fjac, p, &idxij, rcidxs, rcsubs, mcon, cnp, mnp, adata, jac_adata);
+    retval=0;
+    goto freemem_and_return;
+  }
+
   /* compute the error vectors e_ij in hx */
   (*func)(p, &idxij, rcidxs, rcsubs, hx, adata); nfev=1;
   /* compute e=x - f(p) and its L2 norm */
@@ -1133,6 +1267,11 @@ void *jac_adata;
 
   for(itno=stop=0; itno<itmax && !stop; ++itno){
     /* Note that p, e and ||e||_2 have been updated at the previous iteration */
+
+    if(p_eL2<=eps3_sq){ /* error is small */
+      stop=5;
+      break;
+    }
 
     /* compute derivative submatrices A_ij */
     (*fjac)(p, &idxij, rcidxs, rcsubs, jac, jac_adata); ++njev;
@@ -1241,7 +1380,7 @@ if(!(itno%100)){
 		    //nsolved+=sba_Axb_QRnoQ(ptr1, ptr2, ptr3, cnp, 0); ++nlss;
 		    //nsolved+=sba_Axb_QR(ptr1, ptr2, ptr3, cnp, 0); ++nlss;
 		    //nsolved+=sba_Axb_SVD(ptr1, ptr2, ptr3, cnp, 0); ++nlss;
-	      //nsolved=sba_Axb_CG(ptr1, ptr2, ptr3, cnp, (3*cnp)/2, 1E-10, SBA_CG_JACOBI, 0); ++nlss;
+	      //nsolved+=(sba_Axb_CG(ptr1, ptr2, ptr3, cnp, (3*cnp)/2, 1E-10, SBA_CG_JACOBI, 0) > 0); ++nlss;
 	    }
 
 	    if(nsolved==m){
@@ -1268,6 +1407,8 @@ if(!(itno%100)){
        }
 
         (*func)(pdp, &idxij, rcidxs, rcsubs, hx, adata); ++nfev; /* evaluate function at p + dp */
+        if(verbose>1)
+          printf("mean reprojection error %g\n", sba_mean_repr_error(n, mnp, x, hx, &idxij, rcidxs, rcsubs));
         for(i=0, pdp_eL2=0.0; i<nobs; ++i){ /* compute ||e(pdp)||_2 */
           hx[i]=tmp=x[i]-hx[i];
           pdp_eL2+=tmp*tmp;
@@ -1279,7 +1420,7 @@ if(!(itno%100)){
         dF=p_eL2-pdp_eL2;
 
         if(verbose>1)
-          printf("\ndamping term %12g, gain ratio %10g, errors %10g %10g\n", mu, dL!=0.0? dF/dL : dF/DBL_EPSILON, p_eL2/nvis, pdp_eL2/nvis);
+          printf("\ndamping term %8g, gain ratio %8g, errors %8g / %8g = %g\n", mu, dL!=0.0? dF/dL : dF/DBL_EPSILON, p_eL2/nvis, pdp_eL2/nvis, p_eL2/pdp_eL2);
 
         if(dL>0.0 && dF>0.0){ /* reduction in error, increment is accepted */
           tmp=(2.0*dF/dL-1.0);
@@ -1302,7 +1443,14 @@ if(!(itno%100)){
        */
 
       mu*=nu;
-      nu*=2;
+      nu2=nu<<1; // 2*nu;
+      if(nu2<=nu){ /* nu has wrapped around (overflown) */
+        fprintf(stderr, "Too many failed attempts to increase the damping factor in sba_mot_levmar_x()! Singular hessian matrix?\n");
+        //exit(1);
+        stop=6;
+        break;
+      }
+      nu=nu2;
 
       /* restore U diagonal entries */
       for(j=mcon; j<m; ++j){
@@ -1315,6 +1463,14 @@ if(!(itno%100)){
   }
 
   if(itno>=itmax) stop=3;
+
+  /* restore U diagonal entries */
+  for(j=mcon; j<m; ++j){
+    ptr1=U + j*Usz; // set ptr1 to point to U_j
+    ptr2=diagU + j*cnp; // set ptr2 to point to diagU_j
+    for(i=0; i<cnp; ++i)
+      ptr1[i*cnp+i]=ptr2[i];
+  }
 
   if(info){
     info[0]=init_p_eL2;
@@ -1333,7 +1489,11 @@ if(!(itno%100)){
     info[8]=njev;
     info[9]=nlss;
   }
+  //sba_print_sol(n, m, p, cnp, 0, x, mnp, &idxij, rcidxs, rcsubs);
+  retval=(stop!=4)?  itno : -1;
                                                                
+freemem_and_return: /* NOTE: this point is also reached via a goto! */
+
    /* free whatever was allocated */
   free(jac); free(U);
   free(e); free(ea);  
@@ -1348,7 +1508,7 @@ if(!(itno%100)){
 
   sba_crsm_free(&idxij);
 
-  return (stop!=4)?  itno : -1;
+  return retval;
 }
 
 
@@ -1392,11 +1552,11 @@ int sba_str_levmar_x(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to func, fjac */ 
 
-    int itmax,         /* I: maximum number of iterations */
+    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
     int verbose,       /* I: verbosity */
     double opts[SBA_OPTSSZ],
 	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stopping thresholds for ||J^T e||_inf and ||dp||_2
+                        * stopping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -1407,6 +1567,8 @@ int sba_str_levmar_x(
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
                         *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 5 - stopped by small ||e||_2
+                        *                                 6 - too many attempts to increase damping. Restart with increased mu
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
@@ -1414,7 +1576,7 @@ int sba_str_levmar_x(
 )
 {
 register int i, j, ii, jj, k;
-int nvis, nnz;
+int nvis, nnz, retval;
 
 /* The following are work arrays that are dynamically allocated by sba_str_levmar_x() */
 double *jac;  /* work array for storing the jacobian, max. size n*m*mnp*pnp */
@@ -1461,9 +1623,9 @@ register double mu,  /* damping constant */
                 tmp; /* mainly used in matrix & vector multiplications */
 double p_eL2, eb_inf, pdp_eL2; /* ||e(p)||_2, ||J^T e||_inf, ||e(p+dp)||_2 */
 double p_L2, dp_L2=DBL_MAX, dF, dL;
-double tau=FABS(opts[0]), eps1=FABS(opts[1]), eps2=FABS(opts[2]), eps2_sq=opts[2]*opts[2];
+double tau=FABS(opts[0]), eps1=FABS(opts[1]), eps2=FABS(opts[2]), eps2_sq=opts[2]*opts[2], eps3_sq=opts[3]*opts[3];
 double init_p_eL2;
-int nu=2, stop, nfev, njev=0, nlss=0;
+int nu=2, nu2, stop, nfev, njev=0, nlss=0;
 int nobs, nvars;
 
 struct fdj_data_x_ fdj_data;
@@ -1533,6 +1695,12 @@ void *jac_adata;
     jac_adata=adata;
   }
 
+  if(itmax==0){ /* verify jacobian */
+    sba_str_chkjac_x(func, fjac, p, &idxij, rcidxs, rcsubs, pnp, mnp, adata, jac_adata);
+    retval=0;
+    goto freemem_and_return;
+  }
+
   /* compute the error vectors e_ij in hx */
   (*func)(p, &idxij, rcidxs, rcsubs, hx, adata); nfev=1;
   /* compute e=x - f(p) and its L2 norm */
@@ -1546,6 +1714,11 @@ void *jac_adata;
 
   for(itno=stop=0; itno<itmax && !stop; ++itno){
     /* Note that p, e and ||e||_2 have been updated at the previous iteration */
+
+    if(p_eL2<=eps3_sq){ /* error is small */
+      stop=5;
+      break;
+    }
 
     /* compute derivative submatrices B_ij */
     (*fjac)(p, &idxij, rcidxs, rcsubs, jac, jac_adata); ++njev;
@@ -1653,7 +1826,7 @@ if(!(itno%100)){
         //nsolved+=sba_Axb_QRnoQ(ptr1, ptr2, ptr3, pnp, 0); ++nlss;
         //nsolved+=sba_Axb_QR(ptr1, ptr2, ptr3, pnp, 0); ++nlss;
         //nsolved+=sba_Axb_SVD(ptr1, ptr2, ptr3, pnp, 0); ++nlss;
-	      //nsolved=sba_Axb_CG(ptr1, ptr2, ptr3, pnp, (3*pnp)/2, 1E-10, SBA_CG_JACOBI, 0); ++nlss;
+	      //nsolved+=(sba_Axb_CG(ptr1, ptr2, ptr3, pnp, (3*pnp)/2, 1E-10, SBA_CG_JACOBI, 0) > 0); ++nlss;
       }
 
       if(nsolved==n){
@@ -1680,6 +1853,8 @@ if(!(itno%100)){
        }
 
         (*func)(pdp, &idxij, rcidxs, rcsubs, hx, adata); ++nfev; /* evaluate function at p + dp */
+        if(verbose>1)
+          printf("mean reprojection error %g\n", sba_mean_repr_error(n, mnp, x, hx, &idxij, rcidxs, rcsubs));
         for(i=0, pdp_eL2=0.0; i<nobs; ++i){ /* compute ||e(pdp)||_2 */
           hx[i]=tmp=x[i]-hx[i];
           pdp_eL2+=tmp*tmp;
@@ -1691,7 +1866,7 @@ if(!(itno%100)){
         dF=p_eL2-pdp_eL2;
 
         if(verbose>1)
-          printf("\ndamping term %12g, gain ratio %10g, errors %10g %10g\n", mu, dL!=0.0? dF/dL : dF/DBL_EPSILON, p_eL2/nvis, pdp_eL2/nvis);
+          printf("\ndamping term %8g, gain ratio %8g, errors %8g / %8g = %g\n", mu, dL!=0.0? dF/dL : dF/DBL_EPSILON, p_eL2/nvis, pdp_eL2/nvis, p_eL2/pdp_eL2);
 
         if(dL>0.0 && dF>0.0){ /* reduction in error, increment is accepted */
           tmp=(2.0*dF/dL-1.0);
@@ -1714,7 +1889,14 @@ if(!(itno%100)){
        */
 
       mu*=nu;
-      nu*=2;
+      nu2=nu<<1; // 2*nu;
+      if(nu2<=nu){ /* nu has wrapped around (overflown) */
+        fprintf(stderr, "Too many failed attempts to increase the damping factor in sba_str_levmar_x()! Singular hessian matrix?\n");
+        //exit(1);
+        stop=6;
+        break;
+      }
+      nu=nu2;
 
       /* restore V diagonal entries */
       for(i=0; i<n; ++i){
@@ -1727,6 +1909,14 @@ if(!(itno%100)){
   }
 
   if(itno>=itmax) stop=3;
+
+  /* restore V diagonal entries */
+  for(i=0; i<n; ++i){
+    ptr1=V + i*Vsz; // set ptr1 to point to V_i
+    ptr2=diagV + i*pnp; // set ptr2 to point to diagV_i
+    for(j=0; j<pnp; ++j)
+      ptr1[j*pnp+j]=ptr2[j];
+  }
 
   if(info){
     info[0]=init_p_eL2;
@@ -1745,7 +1935,11 @@ if(!(itno%100)){
     info[8]=njev;
     info[9]=nlss;
   }
+  //sba_print_sol(n, m, p, 0, pnp, x, mnp, &idxij, rcidxs, rcsubs);
+  retval=(stop!=4)?  itno : -1;
                                                                
+freemem_and_return: /* NOTE: this point is also reached via a goto! */
+
    /* free whatever was allocated */
   free(jac); free(V);
   free(e); free(eb);  
@@ -1760,5 +1954,5 @@ if(!(itno%100)){
 
   sba_crsm_free(&idxij);
 
-  return (stop!=4)?  itno : -1;
+  return retval;
 }
