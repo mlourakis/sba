@@ -1,7 +1,7 @@
 /* ////////////////////////////////////////////////////////////////////////////////
 // 
 //  Matlab MEX file for sba's simple drivers
-//  Copyright (C) 2007  Manolis Lourakis (lourakis **at** ics.forth.gr)
+//  Copyright (C) 2007-2008 Manolis Lourakis (lourakis at ics forth gr)
 //  Institute of Computer Science, Foundation for Research & Technology - Hellas
 //  Heraklion, Crete, Greece.
 //
@@ -135,8 +135,8 @@ register int i, j;
   A=mxGetPr(Am);
   At=mxMalloc(m*n*sizeof(double));
 
-  for(i=0; i<m; i++)
-    for(j=0; j<n; j++)
+  for(i=0; i<m; ++i)
+    for(j=0; j<n; ++j)
       At[i*n+j]=A[i+j*m];
   
   return At;
@@ -156,8 +156,8 @@ register int i, j;
   A=mxGetPr(Am);
   At=mxMalloc(m*n*sizeof(char));
 
-  for(i=0; i<m; i++)
-    for(j=0; j<n; j++)
+  for(i=0; i<m; ++i)
+    for(j=0; j<n; ++j)
       At[i*n+j]=(A[i+j*m])? 1 : 0;
   
   return At;
@@ -236,13 +236,13 @@ int blockn;
      */ 
 
     switch(n-i){ 
-      case 7 : x[i]=y[i]; i++;
-      case 6 : x[i]=y[i]; i++;
-      case 5 : x[i]=y[i]; i++;
-      case 4 : x[i]=y[i]; i++;
-      case 3 : x[i]=y[i]; i++;
-      case 2 : x[i]=y[i]; i++;
-      case 1 : x[i]=y[i]; i++;
+      case 7 : x[i]=y[i]; ++i;
+      case 6 : x[i]=y[i]; ++i;
+      case 5 : x[i]=y[i]; ++i;
+      case 4 : x[i]=y[i]; ++i;
+      case 3 : x[i]=y[i]; ++i;
+      case 2 : x[i]=y[i]; ++i;
+      case 1 : x[i]=y[i]; ++i;
     }
   }
 
@@ -645,7 +645,7 @@ double *aj;
 
 /*
  
-[ret, p, info]=sba(n, m, mcon, vmask, p, cnp, pnp, x, mnp, proj, projac, itmax, verbose, opts, reftype, ...);
+[ret, p, info]=sba(n, m, mcon, vmask, p, cnp, pnp, x, covx, mnp, proj, projac, itmax, verbose, opts, reftype, ...);
 
     Most arguments are straightforward to explain, please refer to the description of their homonymous ones
     in the C version. Below, arguments that have a special meaning in matlab are discussed in more detail.
@@ -679,9 +679,10 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *Prhs[])
 {
 register int i;
 int n, m, mcon, cnp, pnp, mnp, nvars, nprojs, minnvars;
-int status, reftype=BA_MOTSTRUCT, itmax, verbose=0, havejac, havedynproj, havedynprojac, len, nopts, nextra, nreserved;
-double *p0, *p, *x;
-double opts[SBA_OPTSSZ]={SBA_INIT_MU, SBA_STOP_THRESH, SBA_STOP_THRESH, SBA_STOP_THRESH};
+int status, reftype=BA_MOTSTRUCT, itmax, verbose=0, havejac, havedynproj, havedynprojac;
+int len, nopts, nextra, nreserved, covlen;
+double *p0, *p, *x, *covx=NULL;
+double opts[SBA_OPTSSZ]={SBA_INIT_MU, SBA_STOP_THRESH, SBA_STOP_THRESH, SBA_STOP_THRESH, 0.0};
 double info[SBA_INFOSZ];
 char *vmask, *str;
 register double *pdbl;
@@ -703,19 +704,19 @@ clock_t start_time, end_time;
   /* the first argument must be a scalar */
   if(!mxIsDouble(prhs[0]) || mxIsComplex(prhs[0]) || mxGetM(prhs[0])!=1 || mxGetN(prhs[0])!=1)
     mexErrMsgTxt("sba: n must be a scalar.");
-  n=mxGetScalar(prhs[0]);
+  n=(int)mxGetScalar(prhs[0]);
 
   /** m **/
   /* the second argument must be a scalar */
   if(!mxIsDouble(prhs[1]) || mxIsComplex(prhs[1]) || mxGetM(prhs[1])!=1 || mxGetN(prhs[1])!=1)
     mexErrMsgTxt("sba: m must be a scalar.");
-  m=mxGetScalar(prhs[1]);
+  m=(int)mxGetScalar(prhs[1]);
 
   /** mcon **/
   /* the third argument must be a scalar */
   if(!mxIsDouble(prhs[2]) || mxIsComplex(prhs[2]) || mxGetM(prhs[2])!=1 || mxGetN(prhs[2])!=1)
     mexErrMsgTxt("sba: mcon must be a scalar.");
-  mcon=mxGetScalar(prhs[2]);
+  mcon=(int)mxGetScalar(prhs[2]);
 
   /** mask **/
   /* the fourth argument must be a nxm matrix */
@@ -756,13 +757,13 @@ clock_t start_time, end_time;
   /* the sixth argument must be a scalar */
   if(!mxIsDouble(prhs[5]) || mxIsComplex(prhs[5]) || mxGetM(prhs[5])!=1 || mxGetN(prhs[5])!=1)
     mexErrMsgTxt("sba: cnp must be a scalar.");
-  cnp=mxGetScalar(prhs[5]);
+  cnp=(int)mxGetScalar(prhs[5]);
 
   /** pnp **/
   /* the seventh argument must be a scalar */
   if(!mxIsDouble(prhs[6]) || mxIsComplex(prhs[6]) || mxGetM(prhs[6])!=1 || mxGetN(prhs[6])!=1)
     mexErrMsgTxt("sba: pnp must be a scalar.");
-  pnp=mxGetScalar(prhs[6]);
+  pnp=(int)mxGetScalar(prhs[6]);
 
   /* check that p has the right dimension */
   if(nvars!=m*cnp + n*pnp)
@@ -775,11 +776,23 @@ clock_t start_time, end_time;
   x=mxGetPr(prhs[7]);
   nprojs=_MAX_(mxGetM(prhs[7]), mxGetN(prhs[7]));
 
+  /* covx (optional) */
+  /* check if the ninth argument is a vector */
+  if(mxIsDouble(prhs[8]) && !mxIsComplex(prhs[8]) && (mxGetM(prhs[8])==1 || mxGetN(prhs[8])==1)){
+    covlen=_MAX_(mxGetM(prhs[8]), mxGetN(prhs[8]));
+    if(covlen>1){ /* make sure that argument is not a scalar */
+      covx=mxGetPr(prhs[8]);
+
+      ++prhs;
+      --nrhs;
+    }
+  }
+
   /** mnp **/
-  /* the nineth argument must be a scalar */
+  /* the ninth required argument must be a scalar */
   if(!mxIsDouble(prhs[8]) || mxIsComplex(prhs[8]) || mxGetM(prhs[8])!=1 || mxGetN(prhs[8])!=1)
     mexErrMsgTxt("sba: mnp must be a scalar.");
-  mnp=mxGetScalar(prhs[8]);
+  mnp=(int)mxGetScalar(prhs[8]);
   nprojs/=mnp;
 
   /* check that x has the correct dimension, comparing with the elements in vmask */
@@ -788,8 +801,12 @@ clock_t start_time, end_time;
   if(nprojs!=len)
     matlabFmtdErrMsgTxt("sba: the size of x should agree with the number of non-zeros in vmask (got %d and %d).", nprojs, len);
 
+  /* if supplied, check that covx has the correct dimension comparing with the elements in vmask */
+  if(covx && covlen!=len*mnp*mnp)
+    matlabFmtdErrMsgTxt("sba: covx must be a real vector of size %d (got %d).", len*mnp*mnp, covlen);
+
   /** proj **/ 
-  /* tenth argument must be a string , i.e. a char row vector */
+  /* the tenth required argument must be a string , i.e. a char row vector */
   if(mxIsChar(prhs[9])!=1)
     mexErrMsgTxt("sba: proj argument must be a string.");
   if(mxGetM(prhs[9])!=1)
@@ -875,17 +892,17 @@ clock_t start_time, end_time;
 #endif /* DEBUG */
 
   /** itmax **/
-  /* the eleventh argument must be a scalar */
+  /* the eleventh required argument must be a scalar */
   if(!mxIsDouble(prhs[10]) || mxIsComplex(prhs[10]) || mxGetM(prhs[10])!=1 || mxGetN(prhs[10])!=1)
     mexErrMsgTxt("sba: itmax must be a scalar.");
-  itmax=mxGetScalar(prhs[10]);
+  itmax=(int)mxGetScalar(prhs[10]);
 
-  /* arguments below this point are optional */
+  /* all arguments below this point are optional */
 
   /* check if we have a scalar argument; if yes, this is taken to be the 'verbose' argument */
   if(nrhs>=MININARGS){
     if(mxIsDouble(prhs[min1]) && !mxIsComplex(prhs[min1]) && mxGetM(prhs[min1])==1 && mxGetN(prhs[min1])==1){
-      verbose=mxGetScalar(prhs[min1]);
+      verbose=(int)mxGetScalar(prhs[min1]);
 
       ++prhs;
       --nrhs;
@@ -1000,7 +1017,7 @@ clock_t start_time, end_time;
     case BA_MOTSTRUCT:
       minnvars=nvars;
       mdata.pa=mdata.pb=NULL; /* not needed */
-      status=sba_motstr_levmar(n, m, mcon, vmask, p, cnp, pnp, x, mnp,
+      status=sba_motstr_levmar(n, m, mcon, vmask, p, cnp, pnp, x, covx, mnp,
                               (havedynproj)? proj_motstrDL : proj_motstrMATLAB, (havejac)? (havedynprojac? projac_motstrDL : projac_motstrMATLAB) : NULL,
                               (void *)&mdata, itmax, verbose>1, opts, info);
       break;
@@ -1009,7 +1026,7 @@ clock_t start_time, end_time;
       mdata.pa=NULL; /* not needed */
       mdata.pb=p+m*cnp;
       /* note: only the first part of p is used in the call below (i.e. first m*cnp elements) */
-      status=sba_mot_levmar(n, m, mcon, vmask, p, cnp, x, mnp,
+      status=sba_mot_levmar(n, m, mcon, vmask, p, cnp, x, covx, mnp,
                             (havedynproj)? proj_motDL : proj_motMATLAB, (havejac)? (havedynprojac? projac_motDL : projac_motMATLAB) : NULL,
                             (void *)&mdata, itmax, verbose>1, opts, info);
       break;
@@ -1017,7 +1034,7 @@ clock_t start_time, end_time;
       minnvars=n*pnp;
       mdata.pa=p;
       mdata.pb=NULL; /* not needed */
-      status=sba_str_levmar(n, m, vmask, p+m*cnp, pnp, x, mnp,
+      status=sba_str_levmar(n, m, vmask, p+m*cnp, pnp, x, covx, mnp,
                             (havedynproj)? proj_strDL : proj_strMATLAB, (havejac)? (havedynprojac? projac_strDL : projac_strMATLAB) : NULL,
                             (void *)&mdata, itmax, verbose>1, opts, info);
       break;

@@ -1,7 +1,7 @@
 /////////////////////////////////////////////////////////////////////////////////
 //// 
 ////  Linear algebra operations for the sba package
-////  Copyright (C) 2004  Manolis Lourakis (lourakis@ics.forth.gr)
+////  Copyright (C) 2004-2008 Manolis Lourakis (lourakis at ics forth gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////
@@ -23,13 +23,7 @@
 #include <math.h>
 #include <float.h>
 
-/* inline */
-#ifdef _MSC_VER
-#define inline __inline //MSVC
-#elif !defined(__GNUC__)
-#define inline //other than MSVC, GCC: define empty
-#endif
-
+#include "compiler.h"
 #include "sba.h"
 
 #ifdef SBA_APPEND_UNDERSCORE_SUFFIX
@@ -48,13 +42,15 @@ extern int F77_FUNC(dorgqr)(int *m, int *n, int *k, double *a, int *lda, double 
 /* solution of triangular system */
 extern int F77_FUNC(dtrtrs)(char *uplo, char *trans, char *diag, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb, int *info);
 
-/* cholesky decomposition, matrix inversion */
-extern int F77_FUNC(dpotf2)(char *uplo, int *n, double *a, int *lda, int *info);
+/* cholesky decomposition, linear system solution and matrix inversion */
+extern int F77_FUNC(dpotf2)(char *uplo, int *n, double *a, int *lda, int *info); /* unblocked cholesky */
 extern int F77_FUNC(dpotrf)(char *uplo, int *n, double *a, int *lda, int *info); /* block version of dpotf2 */
+extern int F77_FUNC(dpotrs)(char *uplo, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb, int *info);
 extern int F77_FUNC(dpotri)(char *uplo, int *n, double *a, int *lda, int *info);
 
 /* LU decomposition, linear system solution and matrix inversion */
-extern int F77_FUNC(dgetrf)(int *m, int *n, double *a, int *lda, int *ipiv, int *info);
+extern int F77_FUNC(dgetrf)(int *m, int *n, double *a, int *lda, int *ipiv, int *info); /* blocked LU */
+extern int F77_FUNC(dgetf2)(int *m, int *n, double *a, int *lda, int *ipiv, int *info); /* unblocked LU */
 extern int F77_FUNC(dgetrs)(char *trans, int *n, int *nrhs, double *a, int *lda, int *ipiv, double *b, int *ldb, int *info);
 extern int F77_FUNC(dgetri)(int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info);
 
@@ -70,9 +66,10 @@ extern int F77_FUNC(dgesdd)(char *jobz, int *m, int *n, double *a, int *lda,
            double *work, int *lwork, int *iwork, int *info);
 
 
-/* Bunch-Kaufman factorization of a real symmetric matrix A and solution of linear systems */
+/* Bunch-Kaufman factorization of a real symmetric matrix A, solution of linear systems and matrix inverse */
 extern int F77_FUNC(dsytrf)(char *uplo, int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info);
 extern int F77_FUNC(dsytrs)(char *uplo, int *n, int *nrhs, double *a, int *lda, int *ipiv, double *b, int *ldb, int *info);
+extern int F77_FUNC(dsytri)(char *uplo, int *n, double *a, int *lda, int *ipiv, double *work, int *info);
 
 
 /*
@@ -91,11 +88,12 @@ extern int F77_FUNC(dsytrs)(char *uplo, int *n, int *nrhs, double *a, int *lda, 
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
 int sba_Axb_QR(double *A, double *B, double *x, int m, int iscolmaj)
 {
 static double *buf=NULL;
-static int buf_sz=0;
+static int buf_sz=0, nb=0;
 
 double *a, *qtb, *r, *tau, *work;
 int a_sz, qtb_sz, r_sz, tau_sz, tot_sz;
@@ -103,12 +101,31 @@ register int i, j;
 int info, worksz, nrhs=1;
 register double sum;
    
+    if(A==NULL){
+      if(buf) free(buf);
+      buf=NULL;
+      buf_sz=0;
+
+      return 1;
+    }
+
     /* calculate required memory size */
     a_sz=(iscolmaj)? 0 : m*m;
     qtb_sz=m;
     r_sz=m*m; /* only the upper triangular part really needed */
     tau_sz=m;
-    worksz=3*m; /* this is probably too much */
+    if(!nb){
+#ifndef SBA_LS_SCARCE_MEMORY
+      double tmp;
+
+      worksz=-1; // workspace query; optimal size is returned in tmp
+      F77_FUNC(dgeqrf)((int *)&m, (int *)&m, NULL, (int *)&m, NULL, (double *)&tmp, (int *)&worksz, (int *)&info);
+      nb=((int)tmp)/m; // optimal worksize is m*nb
+#else
+      nb=1; // min worksize is m
+#endif /* SBA_LS_SCARCE_MEMORY */
+    }
+    worksz=nb*m;
     tot_sz=a_sz + qtb_sz + r_sz + tau_sz + worksz;
 
     if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
@@ -125,8 +142,8 @@ register double sum;
     if(!iscolmaj){
     	a=buf;
 	    /* store A (column major!) into a */
-	    for(i=0; i<m; i++)
-		    for(j=0; j<m; j++)
+	    for(i=0; i<m; ++i)
+		    for(j=0; j<m; ++j)
 			    a[i+j*m]=A[i*m+j];
     }
     else a=A; /* no copying required */
@@ -151,7 +168,7 @@ register double sum;
   }
 
   /* R is now stored in the upper triangular part of a; copy it in r so that dorgqr() below won't destroy it */
-  for(i=0; i<r_sz; i++)
+  for(i=0; i<r_sz; ++i)
     r[i]=a[i];
 
   /* compute Q using the elementary reflectors computed by the above decomposition */
@@ -168,8 +185,8 @@ register double sum;
   }
 
   /* Q is now in a; compute Q^T b in qtb */
-  for(i=0; i<m; i++){
-    for(j=0, sum=0.0; j<m; j++)
+  for(i=0; i<m; ++i){
+    for(j=0, sum=0.0; j<m; ++j)
       sum+=a[i*m+j]*B[j];
     qtb[i]=sum;
   }
@@ -189,7 +206,7 @@ register double sum;
   }
 
 	/* copy the result in x */
-	for(i=0; i<m; i++)
+	for(i=0; i<m; ++i)
     x[i]=qtb[i];
 
 	return 1;
@@ -213,11 +230,12 @@ register double sum;
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
 int sba_Axb_QRnoQ(double *A, double *B, double *x, int m, int iscolmaj)
 {
 static double *buf=NULL;
-static int buf_sz=0;
+static int buf_sz=0, nb=0;
 
 double *a, *atb, *tau, *work;
 int a_sz, atb_sz, tau_sz, tot_sz;
@@ -225,11 +243,30 @@ register int i, j;
 int info, worksz, nrhs=1;
 register double sum;
    
+    if(A==NULL){
+      if(buf) free(buf);
+      buf=NULL;
+      buf_sz=0;
+
+      return 1;
+    }
+
     /* calculate required memory size */
     a_sz=(iscolmaj)? 0 : m*m;
     atb_sz=m;
     tau_sz=m;
-    worksz=3*m; /* this is probably too much */
+    if(!nb){
+#ifndef SBA_LS_SCARCE_MEMORY
+      double tmp;
+
+      worksz=-1; // workspace query; optimal size is returned in tmp
+      F77_FUNC(dgeqrf)((int *)&m, (int *)&m, NULL, (int *)&m, NULL, (double *)&tmp, (int *)&worksz, (int *)&info);
+      nb=((int)tmp)/m; // optimal worksize is m*nb
+#else
+      nb=1; // min worksize is m
+#endif /* SBA_LS_SCARCE_MEMORY */
+    }
+    worksz=nb*m;
     tot_sz=a_sz + atb_sz + tau_sz + worksz;
 
     if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
@@ -246,8 +283,8 @@ register double sum;
     if(!iscolmaj){
     	a=buf;
 	/* store A (column major!) into a */
-	for(i=0; i<m; i++)
-		for(j=0; j<m; j++)
+	for(i=0; i<m; ++i)
+		for(j=0; j<m; ++j)
 			a[i+j*m]=A[i*m+j];
     }
     else a=A; /* no copying required */
@@ -257,8 +294,8 @@ register double sum;
     work=tau+tau_sz;
 
   /* compute A^T b in atb */
-  for(i=0; i<m; i++){
-    for(j=0, sum=0.0; j<m; j++)
+  for(i=0; i<m; ++i){
+    for(j=0, sum=0.0; j<m; ++j)
       sum+=a[i*m+j]*B[j];
     atb[i]=sum;
   }
@@ -308,7 +345,7 @@ register double sum;
   }
 
 	/* copy the result in x */
-	for(i=0; i<m; i++)
+	for(i=0; i<m; ++i)
     x[i]=atb[i];
 
 	return 1;
@@ -321,7 +358,7 @@ register double sum;
  * the Cholesky decomposition:
  * If A=U^T U with U upper triangular, the system to be solved becomes
  * (U^T U) x = b
- * This amount to solving U^T y = b for y and then U x = y for x
+ * This amounts to solving U^T y = b for y and then U x = y for x
  *
  * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
@@ -332,6 +369,7 @@ register double sum;
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
 int sba_Axb_Chol(double *A, double *B, double *x, int m, int iscolmaj)
 {
@@ -343,6 +381,14 @@ int a_sz, b_sz, tot_sz;
 register int i, j;
 int info, nrhs=1;
    
+    if(A==NULL){
+      if(buf) free(buf);
+      buf=NULL;
+      buf_sz=0;
+
+      return 1;
+    }
+
     /* calculate required memory size */
     a_sz=(iscolmaj)? 0 : m*m;
     b_sz=(iscolmaj)? 0 : m;
@@ -363,13 +409,15 @@ int info, nrhs=1;
     	a=buf;
     	b=a+a_sz;
 
-  /* store A (column major!) into a anb B into b */
-	for(i=0; i<m; i++){
-		for(j=0; j<m; j++)
-			a[i+j*m]=A[i*m+j];
-
-    	b[i]=B[i];
-	}
+      /* store A into a and B into b; A is assumed to be symmetric, hence
+       * the column and row major order representations are the same
+       */
+      for(i=0; i<m; ++i){
+        a[i]=A[i];
+        b[i]=B[i];
+      }
+      for(j=m*m; i<j; ++i) // copy remaining rows; note that i is not re-initialized
+        a[i]=A[i];
     }
     else{ /* no copying is necessary */
       a=A;
@@ -391,7 +439,16 @@ int info, nrhs=1;
     }
   }
 
-  /* solve the linear system U^T y = b */
+  /* below are two alternative ways for solving the linear system: */
+#if 1
+  /* use the computed cholesky in one lapack call */
+  F77_FUNC(dpotrs)("U", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
+  if(info<0){
+    fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotrs in sba_Axb_Chol()\n", -info);
+    exit(1);
+  }
+#else
+  /* solve the linear systems U^T y = b, U x = y */
   F77_FUNC(dtrtrs)("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
@@ -405,7 +462,7 @@ int info, nrhs=1;
     }
   }
 
-  /* solve the linear system U x = y */
+  /* solve U x = y */
   F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
@@ -418,9 +475,10 @@ int info, nrhs=1;
       return 0;
     }
   }
+#endif /* 1 */
 
 	/* copy the result in x */
-	for(i=0; i<m; i++)
+	for(i=0; i<m; ++i)
     x[i]=b[i];
 
 	return 1;
@@ -444,6 +502,7 @@ int info, nrhs=1;
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
 int sba_Axb_LU(double *A, double *B, double *x, int m, int iscolmaj)
 {
@@ -455,6 +514,14 @@ register int i, j;
 int info, *ipiv, nrhs=1;
 double *a, *b;
    
+    if(A==NULL){
+      if(buf) free(buf);
+      buf=NULL;
+      buf_sz=0;
+
+      return 1;
+    }
+
     /* calculate required memory size */
     ipiv_sz=m;
     a_sz=(iscolmaj)? 0 : m*m;
@@ -478,8 +545,8 @@ double *a, *b;
     	b=a+a_sz;
 
     /* store A (column major!) into a and B into b */
-	  for(i=0; i<m; i++){
-		  for(j=0; j<m; j++)
+	  for(i=0; i<m; ++i){
+		  for(j=0; j<m; ++j)
         	a[i+j*m]=A[i*m+j];
 
       	b[i]=B[i];
@@ -517,7 +584,7 @@ double *a, *b;
 	}
 
 	/* copy the result in x */
-	for(i=0; i<m; i++){
+	for(i=0; i<m; ++i){
 		x[i]=b[i];
 	}
 
@@ -541,6 +608,7 @@ double *a, *b;
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
 int sba_Axb_SVD(double *A, double *B, double *x, int m, int iscolmaj)
 {
@@ -555,7 +623,16 @@ double thresh, one_over_denom;
 register double sum;
 int info, rank, worksz, *iwork, iworksz;
    
+  if(A==NULL){
+    if(buf) free(buf);
+    buf=NULL;
+    buf_sz=0;
+
+    return 1;
+  }
+
   /* calculate required memory size */
+#ifndef SBA_LS_SCARCE_MEMORY
   worksz=-1; // workspace query. Keep in mind that dgesdd requires more memory than dgesvd
   /* note that optimal work size is returned in thresh */
   F77_FUNC(dgesdd)("A", (int *)&m, (int *)&m, NULL, (int *)&m, NULL, NULL, (int *)&m, NULL, (int *)&m,
@@ -563,6 +640,10 @@ int info, rank, worksz, *iwork, iworksz;
   /* F77_FUNC(dgesvd)("A", "A", (int *)&m, (int *)&m, NULL, (int *)&m, NULL, NULL, (int *)&m, NULL, (int *)&m,
           (double *)&thresh, (int *)&worksz, &info); */
   worksz=(int)thresh;
+#else
+  worksz=m*(7*m+4); // min worksize for dgesdd
+  //worksz=5*m; // min worksize for dgesvd
+#endif /* SBA_LS_SCARCE_MEMORY */
   iworksz=8*m;
   a_sz=(!iscolmaj)? m*m : 0;
   u_sz=m*m; s_sz=m; vt_sz=m*m;
@@ -584,8 +665,8 @@ int info, rank, worksz, *iwork, iworksz;
   if(!iscolmaj){
     a=(double *)(iwork+iworksz);
     /* store A (column major!) into a */
-    for(i=0; i<m; i++)
-      for(j=0; j<m; j++)
+    for(i=0; i<m; ++i)
+      for(j=0; j<m; ++j)
         a[i+j*m]=A[i*m+j];
   }
   else{
@@ -625,17 +706,17 @@ int info, rank, worksz, *iwork, iworksz;
 
   /* compute the pseudoinverse in a */
   memset(a, 0, m*m*sizeof(double)); /* initialize to zero */
-  for(rank=0, thresh=eps*s[0]; rank<m && s[rank]>thresh; rank++){
+  for(rank=0, thresh=eps*s[0]; rank<m && s[rank]>thresh; ++rank){
     one_over_denom=1.0/s[rank];
 
-    for(j=0; j<m; j++)
-      for(i=0; i<m; i++)
+    for(j=0; j<m; ++j)
+      for(i=0; i<m; ++i)
         a[i*m+j]+=vt[rank+i*m]*u[j+rank*m]*one_over_denom;
   }
 
 	/* compute A^+ b in x */
-	for(i=0; i<m; i++){
-	  for(j=0, sum=0.0; j<m; j++)
+	for(i=0; i<m; ++i){
+	  for(j=0, sum=0.0; j<m; ++j)
       sum+=a[i*m+j]*B[j];
     x[i]=sum;
   }
@@ -646,9 +727,11 @@ int info, rank, worksz, *iwork, iworksz;
 /*
  * This function returns the solution of Ax = b for a real symmetric matrix A
  *
- * The function is based on Bunch-Kaufman factorization:
+ * The function is based on UDUT factorization with the pivoting
+ * strategy of Bunch and Kaufman:
  * A is factored as U*D*U^T where U is upper triangular and
- * D symmetric and block diagonal
+ * D symmetric and block diagonal (aka spectral decomposition,
+ * Banachiewicz factorization, modified Cholesky factorization)
  *
  * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
@@ -660,22 +743,42 @@ int info, rank, worksz, *iwork, iworksz;
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
 int sba_Axb_BK(double *A, double *B, double *x, int m, int iscolmaj)
 {
 static double *buf=NULL;
-static int buf_sz=0;
+static int buf_sz=0, nb=0;
 
 int a_sz, ipiv_sz, b_sz, work_sz, tot_sz;
 register int i, j;
 int info, *ipiv, nrhs=1;
 double *a, *b, *work;
    
+    if(A==NULL){
+      if(buf) free(buf);
+      buf=NULL;
+      buf_sz=0;
+
+      return 1;
+    }
+
     /* calculate required memory size */
     ipiv_sz=m;
     a_sz=(iscolmaj)? 0 : m*m;
     b_sz=(iscolmaj)? 0 : m;
-    work_sz=16*m; /* this is probably too much */
+    if(!nb){
+#ifndef SBA_LS_SCARCE_MEMORY
+      double tmp;
+
+      work_sz=-1; // workspace query; optimal size is returned in tmp
+      F77_FUNC(dsytrf)("U", (int *)&m, NULL, (int *)&m, NULL, (double *)&tmp, (int *)&work_sz, (int *)&info);
+      nb=((int)tmp)/m; // optimal worksize is m*nb
+#else
+      nb=-1; // min worksize is 1
+#endif /* SBA_LS_SCARCE_MEMORY */
+    }
+    work_sz=(nb!=-1)? nb*m : 1;
     tot_sz=ipiv_sz*sizeof(int) + (a_sz + b_sz + work_sz)*sizeof(double);
 
     if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
@@ -695,13 +798,15 @@ double *a, *b, *work;
     	b=a+a_sz;
     	work=b+b_sz;
 
-    /* store A (column major!) into a and B into b */
-	  for(i=0; i<m; i++){
-		  for(j=0; j<m; j++)
-        	a[i+j*m]=A[i*m+j];
-
-      	b[i]=B[i];
-    	}
+      /* store A into a and B into b; A is assumed to be symmetric, hence
+       * the column and row major order representations are the same
+       */
+      for(i=0; i<m; ++i){
+        a[i]=A[i];
+        b[i]=B[i];
+      }
+      for(j=m*m; i<j; ++i) // copy remaining rows; note that i is not re-initialized
+        a[i]=A[i];
     }
     else{ /* no copying is necessary */
       a=A;
@@ -736,7 +841,7 @@ double *a, *b, *work;
 	}
 
 	/* copy the result in x */
-	for(i=0; i<m; i++){
+	for(i=0; i<m; ++i){
 		x[i]=b[i];
 	}
 
@@ -744,8 +849,8 @@ double *a, *b, *work;
 }
 
 /*
- * This function computes the inverse of a square matrix A into B
- * using LU decomposition
+ * This function computes the inverse of a square matrix whose upper triangle
+ * is stored in A into its lower triangle using LU decomposition
  *
  * The function returns 0 in case of error (e.g. A is singular),
  * 1 if successfull
@@ -753,52 +858,72 @@ double *a, *b, *work;
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
-int sba_mat_invert_LU(double *A, double *B, int m)
+int sba_symat_invert_LU(double *A, int m)
 {
 static double *buf=NULL;
-static int buf_sz=0;
+static int buf_sz=0, nb=0;
 
 int a_sz, ipiv_sz, work_sz, tot_sz;
 register int i, j;
 int info, *ipiv;
 double *a, *work;
    
-    /* calculate required memory size */
-	  ipiv_sz=m;
-    a_sz=m*m;
-    work_sz=16*m; /* this is probably too much */
-    tot_sz=ipiv_sz*sizeof(int) + (a_sz + work_sz)*sizeof(double); 
+  if(A==NULL){
+    if(buf) free(buf);
+    buf=NULL;
+    buf_sz=0;
 
-    if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
-      if(buf) free(buf); /* free previously allocated memory */
+    return 1;
+  }
 
-      buf_sz=tot_sz;
-      buf=(double *)malloc(buf_sz);
-      if(!buf){
-        fprintf(stderr, "memory allocation in sba_mat_invert_LU() failed!\n");
-        exit(1);
-      }
+  /* calculate required memory size */
+  ipiv_sz=m;
+  a_sz=m*m;
+  if(!nb){
+#ifndef SBA_LS_SCARCE_MEMORY
+    double tmp;
+
+    work_sz=-1; // workspace query; optimal size is returned in tmp
+    F77_FUNC(dgetri)((int *)&m, NULL, (int *)&m, NULL, (double *)&tmp, (int *)&work_sz, (int *)&info);
+    nb=((int)tmp)/m; // optimal worksize is m*nb
+#else
+    nb=1; // min worksize is m
+#endif /* SBA_LS_SCARCE_MEMORY */
+  }
+  work_sz=nb*m;
+  tot_sz=ipiv_sz*sizeof(int) + (a_sz + work_sz)*sizeof(double); 
+
+  if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
+    if(buf) free(buf); /* free previously allocated memory */
+
+    buf_sz=tot_sz;
+    buf=(double *)malloc(buf_sz);
+    if(!buf){
+      fprintf(stderr, "memory allocation in sba_symat_invert_LU() failed!\n");
+      exit(1);
     }
+  }
 
-	  ipiv=(int *)buf;
-    a=(double *)(ipiv + ipiv_sz);
-    work=a+a_sz;
+  ipiv=(int *)buf;
+  a=(double *)(ipiv + ipiv_sz);
+  work=a+a_sz;
 
   /* store A (column major!) into a */
-	for(i=0; i<m; i++)
-		for(j=0; j<m; j++)
-			a[i+j*m]=A[i*m+j];
+	for(i=0; i<m; ++i)
+		for(j=i; j<m; ++j)
+			a[i+j*m]=a[j+i*m]=A[i*m+j]; // copy A's upper part to a's upper & lower
 
   /* LU decomposition for A */
 	F77_FUNC(dgetrf)((int *)&m, (int *)&m, a, (int *)&m, ipiv, (int *)&info);  
 	if(info!=0){
 		if(info<0){
-			fprintf(stderr, "argument %d of dgetrf illegal in sba_mat_invert_LU()\n", -info);
+			fprintf(stderr, "argument %d of dgetrf illegal in sba_symat_invert_LU()\n", -info);
 			exit(1);
 		}
 		else{
-			fprintf(stderr, "singular matrix A for dgetrf in sba_mat_invert_LU()\n");
+			fprintf(stderr, "singular matrix A for dgetrf in sba_symat_invert_LU()\n");
 			return 0;
 		}
 	}
@@ -807,26 +932,27 @@ double *a, *work;
 	F77_FUNC(dgetri)((int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
 	if(info!=0){
 		if(info<0){
-			fprintf(stderr, "argument %d of dgetri illegal in sba_mat_invert_LU()\n", -info);
+			fprintf(stderr, "argument %d of dgetri illegal in sba_symat_invert_LU()\n", -info);
 			exit(1);
 		}
 		else{
-			fprintf(stderr, "singular matrix A for dgetri in sba_mat_invert_LU()\n");
+			fprintf(stderr, "singular matrix A for dgetri in sba_symat_invert_LU()\n");
 			return 0;
 		}
 	}
 
-	/* store (A)^{-1} in B */
-	for(i=0; i<m; i++)
-		for(j=0; j<m; j++)
-      B[i*m+j]=a[i+j*m];
+	/* store (A)^{-1} in A's lower triangle */
+	for(i=0; i<m; ++i)
+		for(j=0; j<=i; ++j)
+      A[i*m+j]=a[i+j*m];
 
 	return 1;
 }
 
 /*
  * This function computes the inverse of a square symmetric positive definite 
- * matrix A into B using Cholesky factorization
+ * matrix whose upper triangle is stored in A into its lower triangle using
+ * Cholesky factorization
  *
  * The function returns 0 in case of error (e.g. A is not positive definite or singular),
  * 1 if successfull
@@ -834,8 +960,9 @@ double *a, *work;
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
-int sba_mat_invert_Chol(double *A, double *B, int m)
+int sba_symat_invert_Chol(double *A, int m)
 {
 static double *buf=NULL;
 static int buf_sz=0;
@@ -845,38 +972,46 @@ register int i, j;
 int info;
 double *a;
    
-    /* calculate required memory size */
-    a_sz=m*m;
-    tot_sz=a_sz; 
+  if(A==NULL){
+    if(buf) free(buf);
+    buf=NULL;
+    buf_sz=0;
 
-    if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
-      if(buf) free(buf); /* free previously allocated memory */
+    return 1;
+  }
 
-      buf_sz=tot_sz;
-      buf=(double *)malloc(buf_sz*sizeof(double));
-      if(!buf){
-        fprintf(stderr, "memory allocation in sba_mat_invert_Chol() failed!\n");
-        exit(1);
-      }
+  /* calculate required memory size */
+  a_sz=m*m;
+  tot_sz=a_sz; 
+
+  if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
+    if(buf) free(buf); /* free previously allocated memory */
+
+    buf_sz=tot_sz;
+    buf=(double *)malloc(buf_sz*sizeof(double));
+    if(!buf){
+      fprintf(stderr, "memory allocation in sba_symat_invert_Chol() failed!\n");
+      exit(1);
     }
+  }
 
-    a=(double *)buf;
+  a=(double *)buf;
 
-  /* store A (column major!) into a */
-	for(i=0; i<m; i++)
-		for(j=0; j<m; j++)
-			a[i+j*m]=A[i*m+j];
+  /* store A into a; A is assumed symmetric, hence no transposition is needed */
+  for(i=0, j=a_sz; i<j; ++i)
+    a[i]=A[i];
 
-  /* Cholesky factorization for A */
-  F77_FUNC(dpotrf)("L", (int *)&m, a, (int *)&m, (int *)&info);
+  /* Cholesky factorization for A; a's lower part corresponds to A's upper */
+  //F77_FUNC(dpotrf)("L", (int *)&m, a, (int *)&m, (int *)&info);
+  F77_FUNC(dpotf2)("L", (int *)&m, a, (int *)&m, (int *)&info);
   /* error treatment */
   if(info!=0){
     if(info<0){
-      fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotrf in sba_mat_invert_Chol()\n", -info);
+      fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotrf in sba_symat_invert_Chol()\n", -info);
       exit(1);
     }
     else{
-      fprintf(stderr, "LAPACK error: the leading minor of order %d is not positive definite,\nthe factorization could not be completed for dpotrf in sba_mat_invert_Chol()\n", info);
+      fprintf(stderr, "LAPACK error: the leading minor of order %d is not positive definite,\nthe factorization could not be completed for dpotrf in sba_symat_invert_Chol()\n", info);
       return 0;
     }
   }
@@ -885,19 +1020,121 @@ double *a;
   F77_FUNC(dpotri)("L", (int *)&m, a, (int *)&m, (int *)&info);
 	if(info!=0){
 		if(info<0){
-			fprintf(stderr, "argument %d of dpotri illegal in sba_mat_invert_Chol()\n", -info);
+			fprintf(stderr, "argument %d of dpotri illegal in sba_symat_invert_Chol()\n", -info);
 			exit(1);
 		}
 		else{
-			fprintf(stderr, "the (%d, %d) element of the factor U or L is zero, singular matrix A for dpotri in sba_mat_invert_Chol()\n", info, info);
+			fprintf(stderr, "the (%d, %d) element of the factor U or L is zero, singular matrix A for dpotri in sba_symat_invert_Chol()\n", info, info);
 			return 0;
 		}
 	}
 
-	/* store (A)^{-1} in B. The lower triangle of the symmetric A^{-1} is in the lower triangle of a */
-	for(i=0; i<m; i++)
-		for(j=0; j<=i; j++)
-      B[i*m+j]=B[j*m+i]=a[i+j*m];
+	/* store (A)^{-1} in A's lower triangle. The lower triangle of the symmetric A^{-1} is in the lower triangle of a */
+	for(i=0; i<m; ++i)
+		for(j=0; j<=i; ++j)
+      A[i*m+j]=a[i+j*m];
+
+	return 1;
+}
+
+/*
+ * This function computes the inverse of a symmetric indefinite 
+ * matrix whose upper triangle is stored in A into its lower triangle
+ * using LDLT factorization with the pivoting strategy of Bunch and Kaufman
+ *
+ * The function returns 0 in case of error (e.g. A is singular),
+ * 1 if successfull
+ *
+ * This function is often called repetitively to solve problems of identical
+ * dimensions. To avoid repetitive malloc's and free's, allocated memory is
+ * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
+ */
+int sba_symat_invert_BK(double *A, int m)
+{
+static double *buf=NULL;
+static int buf_sz=0, nb=0;
+
+int a_sz, ipiv_sz, work_sz, tot_sz;
+register int i, j;
+int info, *ipiv;
+double *a, *work;
+   
+  if(A==NULL){
+    if(buf) free(buf);
+    buf=NULL;
+    buf_sz=0;
+
+    return 1;
+  }
+
+  /* calculate required memory size */
+  ipiv_sz=m;
+  a_sz=m*m;
+  if(!nb){
+#ifndef SBA_LS_SCARCE_MEMORY
+    double tmp;
+
+    work_sz=-1; // workspace query; optimal size is returned in tmp
+    F77_FUNC(dsytrf)("L", (int *)&m, NULL, (int *)&m, NULL, (double *)&tmp, (int *)&work_sz, (int *)&info);
+    nb=((int)tmp)/m; // optimal worksize is m*nb
+#else
+    nb=-1; // min worksize is 1
+#endif /* SBA_LS_SCARCE_MEMORY */
+  }
+  work_sz=(nb!=-1)? nb*m : 1;
+  work_sz=(work_sz>=m)? work_sz : m; /* ensure that work is at least m elements long, as required by dsytri */
+  tot_sz=ipiv_sz*sizeof(int) + (a_sz + work_sz)*sizeof(double);
+
+  if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
+    if(buf) free(buf); /* free previously allocated memory */
+
+    buf_sz=tot_sz;
+    buf=(double *)malloc(buf_sz);
+    if(!buf){
+      fprintf(stderr, "memory allocation in sba_symat_invert_BK() failed!\n");
+      exit(1);
+    }
+  }
+
+  ipiv=(int *)buf;
+  a=(double *)(ipiv + ipiv_sz);
+  work=a+a_sz;
+
+  /* store A into a; A is assumed symmetric, hence no transposition is needed */
+  for(i=0, j=a_sz; i<j; ++i)
+    a[i]=A[i];
+
+  /* LDLT factorization for A; a's lower part corresponds to A's upper */
+	F77_FUNC(dsytrf)("L", (int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
+	if(info!=0){
+		if(info<0){
+			fprintf(stderr, "argument %d of dsytrf illegal in sba_symat_invert_BK()\n", -info);
+			exit(1);
+		}
+		else{
+			fprintf(stderr, "singular block diagonal matrix D for dsytrf in sba_symat_invert_BK() [D(%d, %d) is zero]\n", info, info);
+			return 0;
+		}
+	}
+
+  /* (A)^{-1} from LDLT */
+  F77_FUNC(dsytri)("L", (int *)&m, a, (int *)&m, ipiv, work, (int *)&info);
+	if(info!=0){
+		if(info<0){
+			fprintf(stderr, "argument %d of dsytri illegal in sba_symat_invert_BK()\n", -info);
+			exit(1);
+		}
+		else{
+			fprintf(stderr, "D(%d, %d)=0, matrix is singular and its inverse could not be computed in sba_symat_invert_BK()\n", info, info);
+			return 0;
+		}
+	}
+
+	/* store (A)^{-1} in A's lower triangle. The lower triangle of the symmetric A^{-1} is in the lower triangle of a */
+	for(i=0; i<m; ++i)
+		for(j=0; j<=i; ++j)
+      A[i*m+j]=a[i+j*m];
 
 	return 1;
 }
@@ -909,8 +1146,8 @@ double *a;
  * see http://www.abarnett.demon.co.uk/tutorial.html
  */
 
-inline static double dprod(int n, double *x, double *y)
-{ 
+inline static double dprod(const int n, const double *const x, const double *const y)
+{
 register int i, j1, j2, j3, j4, j5, j6, j7; 
 int blockn;
 register double sum0=0.0, sum1=0.0, sum2=0.0, sum3=0.0,
@@ -963,7 +1200,7 @@ register double sum0=0.0, sum1=0.0, sum2=0.0, sum3=0.0,
  * Similarly to the dot product routine, this one uses loop unrolling and blocking
  */
 
-inline static void daxpy(int n, double *z, double *x, double a, double *y)
+inline static void daxpy(const int n, double *const z, const double *const x, const double a, const double *const y)
 { 
 register int i, j1, j2, j3, j4, j5, j6, j7; 
 int blockn;
@@ -1028,6 +1265,7 @@ int blockn;
  * This function is often called repetitively to solve problems of identical
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
  */
 int sba_Axb_CG(double *A, double *B, double *x, int m, int niter, double eps, int prec, int iscolmaj)
 {
@@ -1041,6 +1279,14 @@ double *a, *res, *d, *q, *s, *wk, *z;
 double delta0, deltaold, deltanew, alpha, beta, eps_sq=eps*eps;
 register double sum;
 int rec_res;
+
+  if(A==NULL){
+    if(buf) free(buf);
+    buf=NULL;
+    buf_sz=0;
+
+    return 1;
+  }
 
   /* calculate required memory size */
   a_sz=(iscolmaj)? m*m : 0;
@@ -1095,11 +1341,12 @@ int rec_res;
     wk=z=NULL;
   }
 
-  if(niter>0)
+  if(niter>0){
 	  for(i=0; i<m; ++i){ // clear solution and initialize residual vector:  res <-- B
 		  x[i]=0.0;
       res[i]=B[i];
     }
+  }
   else{
     niter=-niter;
 
@@ -1219,7 +1466,7 @@ int rec_res;
      * accumulated floating point roundoff errors
      */
     if(rec_res && deltanew<=eps_sq*delta0){
-      /* analytically  recompute delta */
+      /* analytically recompute delta */
 	    for(i=0; i<m; ++i){
         for(j=0, aim=a+i*m, sum=0.0; j<m; ++j)
           sum+=aim[j]*x[j];
@@ -1238,4 +1485,210 @@ int rec_res;
   }
 
 	return iter;
+}
+
+/*
+ * This function computes the Cholesky decomposition of the inverse of a symmetric
+ * (covariance) matrix A into B, i.e. B is s.t. A^-1=B^t*B and B upper triangular.
+ * A and B can coincide
+ *
+ * The function returns 0 in case of error (e.g. A is singular),
+ * 1 if successfull
+ *
+ * This function is often called repetitively to operate on matrices of identical
+ * dimensions. To avoid repetitive malloc's and free's, allocated memory is
+ * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ * A call with NULL as the first argument forces this memory to be released.
+ *
+ */
+#if 0
+int sba_mat_cholinv(double *A, double *B, int m)
+{
+static double *buf=NULL;
+static int buf_sz=0, nb=0;
+
+int a_sz, ipiv_sz, work_sz, tot_sz;
+register int i, j;
+int info, *ipiv;
+double *a, *work;
+   
+  if(A==NULL){
+    if(buf) free(buf);
+    buf=NULL;
+    buf_sz=0;
+
+    return 1;
+  }
+
+  /* calculate the required memory size */
+  ipiv_sz=m;
+  a_sz=m*m;
+  if(!nb){
+#ifndef SBA_LS_SCARCE_MEMORY
+    double tmp;
+
+    work_sz=-1; // workspace query; optimal size is returned in tmp
+    F77_FUNC(dgetri)((int *)&m, NULL, (int *)&m, NULL, (double *)&tmp, (int *)&work_sz, (int *)&info);
+    nb=((int)tmp)/m; // optimal worksize is m*nb
+#else
+    nb=1; // min worksize is m
+#endif /* SBA_LS_SCARCE_MEMORY */
+  }
+  work_sz=nb*m;
+  tot_sz=ipiv_sz*sizeof(int) + (a_sz + work_sz)*sizeof(double); 
+
+  if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
+    if(buf) free(buf); /* free previously allocated memory */
+
+    buf_sz=tot_sz;
+    buf=(double *)malloc(buf_sz);
+    if(!buf){
+      fprintf(stderr, "memory allocation in sba_mat_cholinv() failed!\n");
+      exit(1);
+    }
+  }
+
+  ipiv=(int *)buf;
+  a=(double *)(ipiv + ipiv_sz);
+  work=a+a_sz;
+
+  /* step 1: invert A */
+  /* store A into a; A is assumed symmetric, hence no transposition is needed */
+  for(i=0; i<m*m; ++i)
+    a[i]=A[i];
+
+  /* LU decomposition for A (Cholesky should also do) */
+	F77_FUNC(dgetf2)((int *)&m, (int *)&m, a, (int *)&m, ipiv, (int *)&info);  
+	//F77_FUNC(dgetrf)((int *)&m, (int *)&m, a, (int *)&m, ipiv, (int *)&info);  
+	if(info!=0){
+		if(info<0){
+			fprintf(stderr, "argument %d of dgetf2/dgetrf illegal in sba_mat_cholinv()\n", -info);
+			exit(1);
+		}
+		else{
+			fprintf(stderr, "singular matrix A for dgetf2/dgetrf in sba_mat_cholinv()\n");
+			return 0;
+		}
+	}
+
+  /* (A)^{-1} from LU */
+	F77_FUNC(dgetri)((int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
+	if(info!=0){
+		if(info<0){
+			fprintf(stderr, "argument %d of dgetri illegal in sba_mat_cholinv()\n", -info);
+			exit(1);
+		}
+		else{
+			fprintf(stderr, "singular matrix A for dgetri in sba_mat_cholinv()\n");
+			return 0;
+		}
+	}
+
+  /* (A)^{-1} is now in a (in column major!) */
+
+  /* step 2: Cholesky decomposition of a: A^-1=B^t B, B upper triangular */
+  F77_FUNC(dpotf2)("U", (int *)&m, a, (int *)&m, (int *)&info);
+  /* error treatment */
+  if(info!=0){
+		if(info<0){
+      fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotf2 in sba_mat_cholinv()\n", -info);
+		  exit(1);
+		}
+		else{
+			fprintf(stderr, "LAPACK error: the leading minor of order %d is not positive definite,\n%s\n", info,
+						  "and the Cholesky factorization could not be completed in sba_mat_cholinv()");
+			return 0;
+		}
+  }
+
+  /* the decomposition is in the upper part of a (in column-major order!).
+   * copying it to the lower part and zeroing the upper transposes
+   * a in row-major order
+   */
+  for(i=0; i<m; ++i)
+    for(j=0; j<i; ++j){
+      a[i+j*m]=a[j+i*m];
+      a[j+i*m]=0.0;
+    }
+  for(i=0; i<m*m; ++i)
+    B[i]=a[i];
+
+	return 1;
+}
+#endif
+
+int sba_mat_cholinv(double *A, double *B, int m)
+{
+int a_sz;
+register int i, j;
+int info;
+double *a;
+   
+  if(A==NULL){
+    return 1;
+  }
+
+  a_sz=m*m;
+  a=B; /* use B as working memory, result is produced in it */
+
+  /* step 1: invert A */
+  /* store A into a; A is assumed symmetric, hence no transposition is needed */
+  for(i=0; i<a_sz; ++i)
+    a[i]=A[i];
+
+  /* Cholesky decomposition for A */
+  F77_FUNC(dpotf2)("U", (int *)&m, a, (int *)&m, (int *)&info);
+	if(info!=0){
+		if(info<0){
+			fprintf(stderr, "argument %d of dpotf2 illegal in sba_mat_cholinv()\n", -info);
+			exit(1);
+		}
+		else{
+			fprintf(stderr, "LAPACK error: the leading minor of order %d is not positive definite,\n%s\n", info,
+						  "and the Cholesky factorization could not be completed in sba_mat_cholinv()");
+			return 0;
+		}
+	}
+
+  /* (A)^{-1} from Cholesky */
+	F77_FUNC(dpotri)("U", (int *)&m, a, (int *)&m, (int *)&info);
+	if(info!=0){
+		if(info<0){
+			fprintf(stderr, "argument %d of dpotri illegal in sba_mat_cholinv()\n", -info);
+			exit(1);
+		}
+		else{
+      fprintf(stderr, "the (%d, %d) element of the factor U or L is zero, singular matrix A for dpotri in sba_mat_cholinv()\n", info, info);
+			return 0;
+		}
+	}
+
+  /* (A)^{-1} is now in a (in column major!) */
+
+  /* step 2: Cholesky decomposition of a: A^-1=B^t B, B upper triangular */
+  F77_FUNC(dpotf2)("U", (int *)&m, a, (int *)&m, (int *)&info);
+  /* error treatment */
+  if(info!=0){
+		if(info<0){
+      fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotf2 in sba_mat_cholinv()\n", -info);
+		  exit(1);
+		}
+		else{
+			fprintf(stderr, "LAPACK error: the leading minor of order %d is not positive definite,\n%s\n", info,
+						  "and the Cholesky factorization could not be completed in sba_mat_cholinv()");
+			return 0;
+		}
+  }
+
+  /* the decomposition is in the upper part of a (in column-major order!).
+   * copying it to the lower part and zeroing the upper transposes
+   * a in row-major order
+   */
+  for(i=0; i<m; ++i)
+    for(j=0; j<i; ++j){
+      a[i+j*m]=a[j+i*m];
+      a[j+i*m]=0.0;
+    }
+
+	return 1;
 }

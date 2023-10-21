@@ -38,6 +38,17 @@ for case a) above. The number of intrincic parameters to be kept fixed can also 
 (e.g., fixed skew, fixed aspect ratio and skew, fixed aspect ratio, skew and principal point),
 check the first few lines of sba_driver().
 
+======================= POINT COVARIANCES =======================
+Starting in ver. 1.5, sba supports the incorporation into BA of covariance information
+for image points. To accept such covariances, eucsbademo extends the points file format
+defined above to lines of the form
+
+X Y Z  NFRAMES  FRAME0 x0 y0 covx0^2 covx0y0 covx0y0 covy0^2  FRAME1 x1 y1 covx1^2 covx1y1 covx1y1 covy1^2 ...
+
+In other words, the covariance matrices simply follow the corresponding image coordinates.
+It is also possible to slightly reduce the file size by specifying only the upper
+triangular part of covariance matrices, e.g. covx0^2 covx0y0 covy0^2, etc
+
 ==================== ROTATION PARAMETRIZATION ====================
 In both a) and b) cases above, the eucsbademo program parametrizes rotations internally using
 the vector part of the supplied quaternions, i.e. 3 parameters per camera. To achieve this, the

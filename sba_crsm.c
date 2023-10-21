@@ -1,7 +1,7 @@
 /////////////////////////////////////////////////////////////////////////////////
 //// 
 ////  CRS sparse matrices manipulation routines
-////  Copyright (C) 2004  Manolis Lourakis (lourakis@ics.forth.gr)
+////  Copyright (C) 2004-2008 Manolis Lourakis (lourakis at ics forth gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////
@@ -36,7 +36,7 @@ int msz;
   msz=2*nnz+nr+1;
   sm->val=(int *)malloc(msz*sizeof(int));  /* required memory is allocated in a single step */
   if(!sm->val){
-    fprintf(stderr, "memory allocation request failed in sba_crsm_alloc() [nr=%d, nc=%d, nnz=%d]\n", nr, nc, nnz);
+    fprintf(stderr, "SBA: memory allocation request failed in sba_crsm_alloc() [nr=%d, nc=%d, nnz=%d]\n", nr, nc, nnz);
     exit(1);
   }
   sm->colidx=sm->val+nnz;
@@ -95,20 +95,62 @@ register int i, j, k;
 /* returns the index of the (i, j) element. No bounds checking! */
 int sba_crsm_elmidx(struct sba_crsm *sm, int i, int j)
 {
-register int low, high, mid;
+register int low, high, mid, diff;
 
   low=sm->rowptr[i];
   high=sm->rowptr[i+1]-1;
 
   /* binary search for finding the element at column j */
   while(low<=high){
-    if(j<sm->colidx[low] || j>sm->colidx[high]) return -1; /* not found */
+    /* following early termination test seems to actually slow down the search */
+    //if(j<sm->colidx[low] || j>sm->colidx[high]) return -1; /* not found */
     
+    /* mid=low+((high-low)>>1) ensures no index overflows */
     mid=(low+high)>>1; //(low+high)/2;
-    if(j<sm->colidx[mid])
-        high=mid-1;
-    else if(j>sm->colidx[mid])
-        low=mid+1;
+    diff=j-sm->colidx[mid];
+    if(diff<0)
+      high=mid-1;
+    else if(diff>0)
+      low=mid+1;
+    else
+      return mid;
+  }
+
+  return -1; /* not found */
+}
+
+/* similarly to sba_crsm_elmidx() above, returns the index of the (i, j) element using the
+ * fact that the index of element (i, jp) was previously found to be jpidx. This can be
+ * slightly faster than sba_crsm_elmidx(). No bounds checking!
+ */
+int sba_crsm_elmidxp(struct sba_crsm *sm, int i, int j, int jp, int jpidx)
+{
+register int low, high, mid, diff;
+
+  diff=j-jp;
+  if(diff>0){
+    low=jpidx+1;
+    high=sm->rowptr[i+1]-1;
+  }
+  else if(diff==0)
+    return jpidx;
+  else{ /* diff<0 */
+    low=sm->rowptr[i];
+    high=jpidx-1;
+  }
+
+  /* binary search for finding the element at column j */
+  while(low<=high){
+    /* following early termination test seems to actually slow down the search */
+    //if(j<sm->colidx[low] || j>sm->colidx[high]) return -1; /* not found */
+    
+    /* mid=low+((high-low)>>1) ensures no index overflows */
+    mid=(low+high)>>1; //(low+high)/2;
+    diff=j-sm->colidx[mid];
+    if(diff<0)
+      high=mid-1;
+    else if(diff>0)
+      low=mid+1;
     else
       return mid;
   }
@@ -142,7 +184,7 @@ int sba_crsm_col_elmidxs(struct sba_crsm *sm, int j, int *vidxs, int *iidxs)
 {
 register int *nextrowptr=sm->rowptr+1;
 register int i, l;
-register int low, high, mid;
+register int low, high, mid, diff;
 
   for(i=l=0; i<sm->nr; ++i){
     low=sm->rowptr[i];
@@ -150,13 +192,14 @@ register int low, high, mid;
 
     /* binary search attempting to find an element at column j */
     while(low<=high){
-      if(j<sm->colidx[low] || j>sm->colidx[high]) break; /* not found */
+      //if(j<sm->colidx[low] || j>sm->colidx[high]) break; /* not found */
 
       mid=(low+high)>>1; //(low+high)/2;
-      if(j<sm->colidx[mid])
-          high=mid-1;
-      else if(j>sm->colidx[mid])
-          low=mid+1;
+      diff=j-sm->colidx[mid];
+      if(diff<0)
+        high=mid-1;
+      else if(diff>0)
+        low=mid+1;
       else{ /* found */
         vidxs[l]=mid;
         iidxs[l++]=i;
@@ -184,6 +227,68 @@ register int i, k, l;
   return l;
 }
 ***/
+
+#if 0
+/* returns 1 if there exists a row i having columns j and k,
+ * i.e. a row i s.t. elements (i, j) and (i, k) are nonzero;
+ * 0 otherwise
+ */ 
+int sba_crsm_common_row(struct sba_crsm *sm, int j, int k)
+{
+register int i, low, high, mid, diff;
+
+  if(j==k) return 1;
+
+  for(i=0; i<sm->nr; ++i){
+    low=sm->rowptr[i];
+    high=sm->rowptr[i+1]-1;
+    if(j<sm->colidx[low] || j>sm->colidx[high] || /* j not found */
+       k<sm->colidx[low] || k>sm->colidx[high])   /* k not found */
+      continue;
+
+    /* binary search for finding the element at column j */
+    while(low<=high){
+      mid=(low+high)>>1; //(low+high)/2;
+      diff=j-sm->colidx[mid];
+      if(diff<0)
+        high=mid-1;
+      else if(diff>0)
+        low=mid+1;
+      else
+        goto jfound;
+    }
+
+    continue; /* j not found */
+
+jfound:
+    if(j>k){
+      low=sm->rowptr[i];
+      high=mid-1;
+    }
+    else{
+      low=mid+1;
+      high=sm->rowptr[i+1]-1;
+    }
+
+    if(k<sm->colidx[low] || k>sm->colidx[high]) continue; /* k not found */
+
+    /* binary search for finding the element at column k */
+    while(low<=high){
+      mid=(low+high)>>1; //(low+high)/2;
+      diff=k-sm->colidx[mid];
+      if(diff<0)
+        high=mid-1;
+      else if(diff>0)
+        low=mid+1;
+      else /* found */
+        return 1;
+    }
+  }
+
+  return 0;
+}
+#endif
+
 
 #if 0
 

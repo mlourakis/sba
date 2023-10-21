@@ -29,6 +29,12 @@ function [ret, popt, info]=sba(n, m, mcon, vmask, p0, cnp, pnp, x, mnp, proj, pr
 %      (x_11, .. x_1m, ..., x_n1, .. x_nm), where x_ij is the projection of the i-th point on the j-th image.
 %      If point i is not visible in image j, x_ij is missing; see vmask(i, j).
 %
+% - covx: optional vector of doubles holding the covariance matrices of the measurements laid out row-by-row as
+%      (sigma_x_11, .. sigma_x_1m, ..., sigma_x_n1, .. sigma_x_nm), where sigma_x_ij is the covariance matrix of x_ij.
+%      If point i is not visible in image j, sigma_x_ij is missing; see vmask(i, j).
+%      Note that since sigma_x_ij are symmetric, the row-major ordering of their elements is identical to Matlab's
+%      native column-major ordering!
+%
 % - mnp: number of parameters for each image projections
 %
 % - proj: String defining the name of a function  computing the projection on camera j with parameters aj of
@@ -45,7 +51,7 @@ function [ret, popt, info]=sba(n, m, mcon, vmask, p0, cnp, pnp, x, mnp, proj, pr
 % - itmax: maximum number of iterations.
 %
 %
-% optional input arguments:
+% additional optional input arguments:
 % - projac: String defining the name of a function computing the Jacobian of proj above.
 %      If it does not contain the '@' character, it is assumed to be a matlab function, as follows:
 %          if reftype equals 'motstr', then [Aij, Bij]=projac(aj, bi, varargin);
@@ -70,6 +76,7 @@ function [ret, popt, info]=sba(n, m, mcon, vmask, p0, cnp, pnp, x, mnp, proj, pr
 %
 % - opts: vector of doubles specifying the bundle adjustment parameters.
 %      If an empty vector (i.e. []) is specified, defaults are used.
+%      If N<SBA_OPTSSZ parameters are specified, the remaining SBA_OPTSSZ-N ones are set to defaults
 %
 % - reftype: String defining the type of refinement to be carried out. It should be one of the following:
 %      'motstr' refinement of motion & structure, default

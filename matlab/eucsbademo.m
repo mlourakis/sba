@@ -67,7 +67,7 @@ cal=[a1(1), a2(1), a3(1), a2(2), a3(2)];
 % initial point & structure estimates vector
 p0=[reshape(cams', 1, ncams*cnp) reshape(pts3D', 1, npts*pnp)];
 % options vector
-opts=[1E-03, 1E-12, 1E-12, 1E-12]; % setting to [] forces defaults to be used
+opts=[1E-03, 1E-12, 1E-12, 1E-12, 0.0]; % setting to [] forces defaults to be used
 % note how intrinsic calibration is passed as an extra argument to the invocations below
 
 %profile clear

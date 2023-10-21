@@ -1,6 +1,6 @@
     **************************************************************
                                  SBA 
-                              version 1.4
+                              version 1.5
                           By Manolis Lourakis
 
                      Institute of Computer Science

@@ -3,7 +3,7 @@
 ////  Simple drivers for sparse bundle adjustment based on the
 ////  Levenberg - Marquardt minimization algorithm
 ////  This file provides simple wrappers to the functions defined in sba_levmar.c
-////  Copyright (C) 2004  Manolis Lourakis (lourakis@ics.forth.gr)
+////  Copyright (C) 2004-2008 Manolis Lourakis (lourakis at ics forth gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////
@@ -602,7 +602,7 @@ int sba_motstr_levmar(
     const int mcon,/* number of images (starting from the 1st) whose parameters should not be modified.
 					          * All A_ij (see below) with j<mcon are assumed to be zero
 					          */
-    char *vmask,  /* visibility mask: vmask[i][j]=1 if point i visible in image j, 0 otherwise. nxm */
+    char *vmask,  /* visibility mask: vmask[i, j]=1 if point i visible in image j, 0 otherwise. nxm */
     double *p,    /* initial parameter vector p0: (a1, ..., am, b1, ..., bn).
                    * aj are the image j parameters, bi are the i-th point parameters,
                    * size m*cnp + n*pnp
@@ -612,7 +612,13 @@ int sba_motstr_levmar(
     double *x,    /* measurements vector: (x_11^T, .. x_1m^T, ..., x_n1^T, .. x_nm^T)^T where
                    * x_ij is the projection of the i-th point on the j-th image.
                    * NOTE: some of the x_ij might be missing, if point i is not visible in image j;
-                   * see vmask[i][j], max. size n*m*mnp
+                   * see vmask[i, j], max. size n*m*mnp
+                   */
+    double *covx, /* measurements covariance matrices: (Sigma_x_11, .. Sigma_x_1m, ..., Sigma_x_n1, .. Sigma_x_nm),
+                   * where Sigma_x_ij is the mnp x mnp covariance of x_ij stored row-by-row. Set to NULL if no
+                   * covariance estimates are available (identity matrices are implicitly used in this case).
+                   * NOTE: a certain Sigma_x_ij is missing if the corresponding x_ij is also missing;
+                   * see vmask[i, j], max. size n*m*mnp*mnp
                    */
     const int mnp,/* number of parameters for EACH measurement; usually 2 */
     void (*proj)(int j, int i, double *aj, double *bi, double *xij, void *adata),
@@ -620,13 +626,13 @@ int sba_motstr_levmar(
                                                * the parameters of point i are bi and the parameters of camera j aj,
                                                * computes a prediction of \hat{x}_{ij}. aj is cnp x 1, bi is pnp x 1 and
                                                * xij is mnp x 1. This function is called only if point i is visible in
-                                               * image j (i.e. vmask[i][j]==1)
+                                               * image j (i.e. vmask[i, j]==1)
                                                */
     void (*projac)(int j, int i, double *aj, double *bi, double *Aij, double *Bij, void *adata),
                                               /* functional relation to evaluate d x_ij / d a_j and
                                                * d x_ij / d b_i in Aij and Bij resp.
                                                * This function is called only if point i is visible in * image j
-                                               * (i.e. vmask[i][j]==1). Also, A_ij and B_ij are mnp x cnp and mnp x pnp
+                                               * (i.e. vmask[i, j]==1). Also, A_ij and B_ij are mnp x cnp and mnp x pnp
                                                * matrices resp. and they should be stored in row-major order.
                                                *
                                                * If NULL, the jacobians are approximated by repetitive proj calls
@@ -634,11 +640,11 @@ int sba_motstr_levmar(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to proj, projac */ 
 
-    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
-    int verbose,       /* I: verbosity */
-    double opts[SBA_OPTSSZ],
-	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stoping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
+    const int itmax,   /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
+    const int verbose, /* I: verbosity */
+    const double opts[SBA_OPTSSZ],
+	                     /* I: minim. options [\mu, \epsilon1, \epsilon2, \epsilon3, \epsilon4]. Respectively the scale factor for initial \mu,
+                        * stoping thresholds for ||J^T e||_inf, ||dp||_2, ||e||_2 and (||e||_2-||e_new||_2)/||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -648,9 +654,10 @@ int sba_motstr_levmar(
                         * info[6]=reason for terminating: 1 - stopped by small gradient J^T e
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
-                        *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 4 - stopped by small relative reduction in ||e||_2
                         *                                 5 - too many attempts to increase damping. Restart with increased mu
                         *                                 6 - stopped by small ||e||_2
+                        *                                 7 - stopped by invalid (i.e. NaN or Inf) "func" values. This is a user error
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
@@ -669,7 +676,7 @@ static void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs,
   wdata.adata=adata;
 
   fjac=(projac)? sba_motstr_Qs_jac : sba_motstr_Qs_fdjac;
-  retval=sba_motstr_levmar_x(n, m, mcon, vmask, p, cnp, pnp, x, mnp, sba_motstr_Qs, fjac, &wdata, itmax, verbose, opts, info);
+  retval=sba_motstr_levmar_x(n, m, mcon, vmask, p, cnp, pnp, x, covx, mnp, sba_motstr_Qs, fjac, &wdata, itmax, verbose, opts, info);
 
   if(info){
     register int i;
@@ -700,26 +707,32 @@ int sba_mot_levmar(
     const int mcon,/* number of images (starting from the 1st) whose parameters should not be modified.
 					          * All A_ij (see below) with j<mcon are assumed to be zero
 					          */
-    char *vmask,  /* visibility mask: vmask[i][j]=1 if point i visible in image j, 0 otherwise. nxm */
+    char *vmask,  /* visibility mask: vmask[i, j]=1 if point i visible in image j, 0 otherwise. nxm */
     double *p,    /* initial parameter vector p0: (a1, ..., am).
                    * aj are the image j parameters, size m*cnp */
     const int cnp,/* number of parameters for ONE camera; e.g. 6 for Euclidean cameras */
     double *x,    /* measurements vector: (x_11^T, .. x_1m^T, ..., x_n1^T, .. x_nm^T)^T where
                    * x_ij is the projection of the i-th point on the j-th image.
                    * NOTE: some of the x_ij might be missing, if point i is not visible in image j;
-                   * see vmask[i][j], max. size n*m*mnp
+                   * see vmask[i, j], max. size n*m*mnp
+                   */
+    double *covx, /* measurements covariance matrices: (Sigma_x_11, .. Sigma_x_1m, ..., Sigma_x_n1, .. Sigma_x_nm),
+                   * where Sigma_x_ij is the mnp x mnp covariance of x_ij stored row-by-row. Set to NULL if no
+                   * covariance estimates are available (identity matrices are implicitly used in this case).
+                   * NOTE: a certain Sigma_x_ij is missing if the corresponding x_ij is also missing;
+                   * see vmask[i, j], max. size n*m*mnp*mnp
                    */
     const int mnp,/* number of parameters for EACH measurement; usually 2 */
     void (*proj)(int j, int i, double *aj, double *xij, void *adata),
                                               /* functional relation computing a SINGLE image measurement. Assuming that
                                                * the parameters of camera j are aj, computes a prediction of \hat{x}_{ij}
                                                * for point i. aj is cnp x 1 and xij is mnp x 1.
-                                               * This function is called only if point i is visible in  image j (i.e. vmask[i][j]==1)
+                                               * This function is called only if point i is visible in  image j (i.e. vmask[i, j]==1)
                                                */
     void (*projac)(int j, int i, double *aj, double *Aij, void *adata),
                                               /* functional relation to evaluate d x_ij / d a_j in Aij 
                                                * This function is called only if point i is visible in image j
-                                               * (i.e. vmask[i][j]==1). Also, A_ij are a mnp x cnp matrices
+                                               * (i.e. vmask[i, j]==1). Also, A_ij are a mnp x cnp matrices
                                                * and should be stored in row-major order.
                                                *
                                                * If NULL, the jacobian is approximated by repetitive proj calls
@@ -727,11 +740,11 @@ int sba_mot_levmar(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to proj, projac */ 
 
-    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
-    int verbose,       /* I: verbosity */
-    double opts[SBA_OPTSSZ],
-	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stoping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
+    const int itmax,   /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
+    const int verbose, /* I: verbosity */
+    const double opts[SBA_OPTSSZ],
+	                     /* I: minim. options [\mu, \epsilon1, \epsilon2, \epsilon3, \epsilon]. Respectively the scale factor for initial \mu,
+                        * stoping thresholds for ||J^T e||_inf, ||dp||_2, ||e||_2 and (||e||_2-||e_new||_2)/||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -741,9 +754,10 @@ int sba_mot_levmar(
                         * info[6]=reason for terminating: 1 - stopped by small gradient J^T e
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
-                        *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 4 - stopped by small relative reduction in ||e||_2
                         *                                 5 - too many attempts to increase damping. Restart with increased mu
                         *                                 6 - stopped by small ||e||_2
+                        *                                 7 - stopped by invalid (i.e. NaN or Inf) "func" values. This is a user error
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
@@ -761,7 +775,7 @@ void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double
   wdata.adata=adata;
 
   fjac=(projac)? sba_mot_Qs_jac : sba_mot_Qs_fdjac;
-  retval=sba_mot_levmar_x(n, m, mcon, vmask, p, cnp, x, mnp, sba_mot_Qs, fjac, &wdata, itmax, verbose, opts, info);
+  retval=sba_mot_levmar_x(n, m, mcon, vmask, p, cnp, x, covx, mnp, sba_mot_Qs, fjac, &wdata, itmax, verbose, opts, info);
 
   if(info){
     register int i;
@@ -788,7 +802,7 @@ void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double
 int sba_str_levmar(
     const int n,   /* number of points */
     const int m,   /* number of images */
-    char *vmask,  /* visibility mask: vmask[i][j]=1 if point i visible in image j, 0 otherwise. nxm */
+    char *vmask,  /* visibility mask: vmask[i, j]=1 if point i visible in image j, 0 otherwise. nxm */
     double *p,    /* initial parameter vector p0: (b1, ..., bn).
                    * bi are the i-th point parameters, size n*pnp
                    */
@@ -796,19 +810,25 @@ int sba_str_levmar(
     double *x,    /* measurements vector: (x_11^T, .. x_1m^T, ..., x_n1^T, .. x_nm^T)^T where
                    * x_ij is the projection of the i-th point on the j-th image.
                    * NOTE: some of the x_ij might be missing, if point i is not visible in image j;
-                   * see vmask[i][j], max. size n*m*mnp
+                   * see vmask[i, j], max. size n*m*mnp
+                   */
+    double *covx, /* measurements covariance matrices: (Sigma_x_11, .. Sigma_x_1m, ..., Sigma_x_n1, .. Sigma_x_nm),
+                   * where Sigma_x_ij is the mnp x mnp covariance of x_ij stored row-by-row. Set to NULL if no
+                   * covariance estimates are available (identity matrices are implicitly used in this case).
+                   * NOTE: a certain Sigma_x_ij is missing if the corresponding x_ij is also missing;
+                   * see vmask[i, j], max. size n*m*mnp*mnp
                    */
     const int mnp,/* number of parameters for EACH measurement; usually 2 */
     void (*proj)(int j, int i, double *bi, double *xij, void *adata),
                                               /* functional relation computing a SINGLE image measurement. Assuming that
                                                * the parameters of point i are bi, computes a prediction of \hat{x}_{ij}.
                                                * bi is pnp x 1 and  xij is mnp x 1. This function is called only if point
-                                               * i is visible in image j (i.e. vmask[i][j]==1)
+                                               * i is visible in image j (i.e. vmask[i, j]==1)
                                                */
     void (*projac)(int j, int i, double *bi, double *Bij, void *adata),
                                               /* functional relation to evaluate d x_ij / d b_i in Bij.
                                                * This function is called only if point i is visible in image j
-                                               * (i.e. vmask[i][j]==1). Also, B_ij are mnp x pnp matrices
+                                               * (i.e. vmask[i, j]==1). Also, B_ij are mnp x pnp matrices
                                                * and they should be stored in row-major order.
                                                *
                                                * If NULL, the jacobians are approximated by repetitive proj calls
@@ -816,11 +836,11 @@ int sba_str_levmar(
                                                */
     void *adata,       /* pointer to possibly additional data, passed uninterpreted to proj, projac */ 
 
-    int itmax,         /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
-    int verbose,       /* I: verbosity */
-    double opts[SBA_OPTSSZ],
-	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
-                        * stoping thresholds for ||J^T e||_inf, ||dp||_2 and ||e||_2
+    const int itmax,   /* I: maximum number of iterations. itmax==0 signals jacobian verification followed by immediate return */
+    const int verbose, /* I: verbosity */
+    const double opts[SBA_OPTSSZ],
+	                     /* I: minim. options [\mu, \epsilon1, \epsilon2, \epsilon3, \epsilon4]. Respectively the scale factor for initial \mu,
+                        * stoping thresholds for ||J^T e||_inf, ||dp||_2, ||e||_2 and (||e||_2-||e_new||_2)/||e||_2
                         */
     double info[SBA_INFOSZ]
 	                     /* O: information regarding the minimization. Set to NULL if don't care
@@ -830,9 +850,10 @@ int sba_str_levmar(
                         * info[6]=reason for terminating: 1 - stopped by small gradient J^T e
                         *                                 2 - stopped by small dp
                         *                                 3 - stopped by itmax
-                        *                                 4 - singular matrix. Restart from current p with increased mu 
+                        *                                 4 - stopped by small relative reduction in ||e||_2
                         *                                 5 - too many attempts to increase damping. Restart with increased mu
                         *                                 6 - stopped by small ||e||_2
+                        *                                 7 - stopped by invalid (i.e. NaN or Inf) "func" values. This is a user error
                         * info[7]= # function evaluations
                         * info[8]= # jacobian evaluations
 			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
@@ -850,7 +871,7 @@ static void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs,
   wdata.adata=adata;
 
   fjac=(projac)? sba_str_Qs_jac : sba_str_Qs_fdjac;
-  retval=sba_str_levmar_x(n, m, vmask, p, pnp, x, mnp, sba_str_Qs, fjac, &wdata, itmax, verbose, opts, info);
+  retval=sba_str_levmar_x(n, m, vmask, p, pnp, x, covx, mnp, sba_str_Qs, fjac, &wdata, itmax, verbose, opts, info);
 
   if(info){
     register int i;

@@ -4,7 +4,7 @@
 void readInitialSBAEstimate(char *camsfname, char *ptsfname, int cnp, int pnp, int mnp, 
                             void (*infilter)(double *pin, int nin, double *pout, int nout), int cnfp,
                             int *ncams, int *n3Dpts, int *n2Dprojs,
-                            double **motstruct, double **imgpts, char **vmask);
+                            double **motstruct, double **imgpts, double **covimgpts, char **vmask);
 
 extern void readCalibParams(char *fname, double ical[9]);
 extern void printSBAMotionData(double *motstruct, int ncams, int cnp,

@@ -7,7 +7,7 @@
 #include "readparams.h"
 
 
-#define MAXSTRLEN  1024 /* 1K */
+#define MAXSTRLEN  2048 /* 2K */
 
 /* get rid of the rest of a line upto \n or EOF */
 #define SKIP_LINE(f){                                                       \
@@ -15,6 +15,10 @@ char buf[MAXSTRLEN];                                                        \
   while(!feof(f))                                                           \
     if(!fgets(buf, MAXSTRLEN-1, f) || buf[strlen(buf)-1]=='\n') break;      \
 }
+
+#define NOCOV     0
+#define FULLCOV   1
+#define TRICOV    2
 
 
 /* reads (from "fp") "nvals" doubles into "vals".
@@ -92,6 +96,8 @@ int lineno, ncams, ch;
 
     if(feof(fp)) break;
 
+    ungetc(ch, fp);
+
     SKIP_LINE(fp);
     ++lineno;
     if(ferror(fp)){
@@ -122,7 +128,8 @@ double dummy;
     }
 
     if(feof(fp)) return 0;
-
+    
+    ungetc(ch, fp);
     ++lineno;
     if(!fgets(buf, MAXSTRLEN-1, fp)){ /* read the line found... */
       fprintf(stderr, "countNDoubles(): error reading input file, line %d\n", lineno);
@@ -158,7 +165,7 @@ double *tofilter;
 
   if(filecnp>0 && infilter){
     if((tofilter=(double *)malloc(filecnp*sizeof(double)))==NULL){;
-      fprintf(stderr, "memory allocation failed in readInitialSBAEstimate()\n");
+      fprintf(stderr, "memory allocation failed in readCameraParams()\n");
       exit(1);
     }
   }
@@ -208,14 +215,21 @@ double *tofilter;
 
 
 /* determines the number of 3D points contained in a points parameter file as well as the
- * total number of their 2D image projections across all images. Each 3D point is assumed
- * to be described by "pnp" parameters. The file format is
- * X_0...X_{pnp-1}  nframes  frame0 x0 y0  frame1 x1 y1 ...
+ * total number of their 2D image projections across all images. Also decides if point 
+ * covariances are being supplied. Each 3D point is assumed to be described by "pnp"
+ * parameters and its parameters & image projections are stored as a single line.
+ * The file format is
+ * X_0...X_{pnp-1}  nframes  frame0 x0 y0 [cov0]  frame1 x1 y1 [cov1] ...
+ * The portion of the line starting at "frame0" is ignored for all but the first line
  */
-static void readNpointsAndNprojections(FILE *fp, int *n3Dpts, int pnp, int *nprojs)
+static void readNpointsAndNprojections(FILE *fp, int *n3Dpts, int pnp, int *nprojs, int mnp, int *havecov)
 {
-int lineno, npts, nframes, ch, n;
+int nfirst, lineno, npts, nframes, ch, n;
 
+  /* #parameters for the first line */
+  nfirst=countNDoubles(fp);
+  *havecov=NOCOV;
+  
   *n3Dpts=*nprojs=lineno=npts=0;
   while(!feof(fp)){
     if((ch=fgetc(fp))=='#'){ /* skip comments */
@@ -235,6 +249,16 @@ int lineno, npts, nframes, ch, n;
                       "expecting number of frames for 3D point\n", lineno);
       exit(1);
     }
+    if(npts==0){ /* check the parameters in the first line to determine if we have covariances */
+      nfirst-=(pnp+1); /* ignore point parameters and number of frames */
+      if(nfirst==nframes*(mnp+1 + mnp*mnp)){ /* full mnpxmnp covariance */
+        *havecov=FULLCOV;
+      }else if(nfirst==nframes*(mnp+1 + mnp*(mnp+1)/2)){ /* triangular part of mnpxmnp covariance */
+        *havecov=TRICOV;
+      }else{
+        *havecov=NOCOV;
+      }
+    }
     SKIP_LINE(fp);
     *nprojs+=nframes;
     ++npts;
@@ -248,14 +272,22 @@ int lineno, npts, nframes, ch, n;
  * "params", "projs" & "vmask" are assumed preallocated, pointing to
  * memory blocks large enough to hold the parameters of 3D points, 
  * their projections in all images and the point visibility mask, respectively.
- * Each 3D point is assumed to be defined by pnp parameters.
- * File format is X_{0}...X_{pnp-1}  nframes  frame0 x0 y0  frame1 x1 y1 ...
+ * Also, if "covprojs" is non-NULL, it is assumed preallocated and pointing to
+ * a memory block suitable to hold the covariances of image projections.
+ * Each 3D point is assumed to be defined by pnp parameters and each of its projections
+ * by mnp parameters. Optionally, the mnp*mnp covariance matrix in row-major order
+ * follows each projection. All parameters are stored in a single line.
+ *
+ * File format is X_{0}...X_{pnp-1}  nframes  frame0 x0 y0 [covx0^2 covx0y0 covx0y0 covy0^2] frame1 x1 y1 [covx1^2 covx1y1 covx1y1 covy1^2] ...
+ * with the parameters in angle brackets being optional. To save space, only the upper
+ * triangular part of the covariance can be specified, i.e. [covx0^2 covx0y0 covy0^2], etc
  */
-static void readPointParamsAndProjections(FILE *fp, double *params, int pnp, double *projs, char *vmask, int ncams)
+static void readPointParamsAndProjections(FILE *fp, double *params, int pnp, double *projs, double *covprojs,
+                                          int havecov, int mnp, char *vmask, int ncams)
 {
 int nframes, ch, lineno, ptno, frameno, n;
-const int mnp=2;
-register int i;
+int ntord, covsz=mnp*mnp, tricovsz=mnp*(mnp+1)/2, nshift;
+register int i, ii, jj, k;
 
   lineno=ptno=0;
   while(!feof(fp)){
@@ -273,35 +305,70 @@ register int i;
     n=readNDoubles(fp, params, pnp); /* read in point parameters */
     if(n==EOF) break;
     if(n!=pnp){
-      fprintf(stderr, "readPointParamsAndProjections(): error reading input file, line %d: expecting %d parameters for 3D point\n",
-                       lineno, pnp);
+      fprintf(stderr, "readPointParamsAndProjections(): error reading input file, line %d:\n"
+                      "expecting %d parameters for 3D point, read %d\n", lineno, pnp, n);
       exit(1);
     }
     params+=pnp;
 
     n=readNInts(fp, &nframes, 1);  /* read in number of image projections */
     if(n!=1){
-      fprintf(stderr, "readPointParamsAndProjections(): error reading input file, line %d: expecting number of frames for 3D point\n",
-                       lineno);
+      fprintf(stderr, "readPointParamsAndProjections(): error reading input file, line %d:\n"
+                      "expecting number of frames for 3D point\n", lineno);
       exit(1);
     }
 
     for(i=0; i<nframes; ++i){
       n=readNInts(fp, &frameno, 1); /* read in frame number... */
-      n+=readNDoubles(fp, projs, mnp); /* ...and image projection */
-      if(n!=mnp+1){
-        fprintf(stderr, "readPointParamsAndProjections(): error reading image projections from line %d [n=%d].\n"
-                        "Line contains fewer than %d projections?\n", lineno+1, n, nframes);
-        exit(1);
-      }
-
       if(frameno>=ncams){
         fprintf(stderr, "readPointParamsAndProjections(): line %d contains an image projection for frame %d "
                         "but only %d cameras have been specified!\n", lineno+1, frameno, ncams);
         exit(1);
       }
 
+      n+=readNDoubles(fp, projs, mnp); /* ...and image projection */
       projs+=mnp;
+      if(n!=mnp+1){
+        fprintf(stderr, "readPointParamsAndProjections(): error reading image projections from line %d [n=%d].\n"
+                        "Perhaps line contains fewer than %d projections?\n", lineno+1, n, nframes);
+        exit(1);
+      }
+
+      if(covprojs!=NULL){
+        if(havecov==TRICOV){
+          ntord=tricovsz;
+        }
+        else{
+          ntord=covsz;
+        }
+        n=readNDoubles(fp, covprojs, ntord); /* read in covariance values */
+        if(n!=ntord){
+          fprintf(stderr, "readPointParamsAndProjections(): error reading image projection covariances from line %d [n=%d].\n"
+                          "Perhaps line contains fewer than %d projections?\n", lineno+1, n, nframes);
+          exit(1);
+        }
+        if(havecov==TRICOV){
+          /* complete the full matrix from the triangular part that was read.
+           * First, prepare upper part: element (ii, mnp-1) is at position mnp-1 + ii*(2*mnp-ii-1)/2.
+           * Row ii has mnp-ii elements that must be shifted by ii*(ii+1)/2
+           * positions to the right to make space for the lower triangular part
+           */
+          for(ii=mnp; --ii; ){
+            k=mnp-1 + ((ii*((mnp<<1)-ii-1))>>1); //mnp-1 + ii*(2*mnp-ii-1)/2
+            nshift=(ii*(ii+1))>>1; //ii*(ii+1)/2;
+            for(jj=0; jj<mnp-ii; ++jj){
+              covprojs[k-jj+nshift]=covprojs[k-jj];
+              //covprojs[k-jj]=0.0; // this clears the lower part
+            }
+          }
+          /* copy to lower part */
+          for(ii=mnp; ii--; )
+            for(jj=ii; jj--; )
+              covprojs[ii*mnp+jj]=covprojs[jj*mnp+ii];
+        }
+        covprojs+=covsz;
+      }
+
       vmask[ptno*ncams+frameno]=1;
     }
 
@@ -314,15 +381,17 @@ register int i;
 
 
 /* combines the above routines to read the initial estimates of the motion + structure parameters from text files.
- * Also, it loads the projections of 3D points across images. The routine dynamically allocates the required amount
- * of memory (last 3 arguments).
+ * Also, it loads the projections of 3D points across images and optionally their covariances.
+ * The routine dynamically allocates the required amount of memory (last 4 arguments).
+ * If no covariances are supplied, *covimgpts is set to NULL
  */
 void readInitialSBAEstimate(char *camsfname, char *ptsfname, int cnp, int pnp, int mnp,
                             void (*infilter)(double *pin, int nin, double *pout, int nout), int filecnp,
                             int *ncams, int *n3Dpts, int *n2Dprojs,
-                            double **motstruct, double **imgpts, char **vmask)
+                            double **motstruct, double **imgpts, double **covimgpts, char **vmask)
 {
 FILE *fpc, *fpp;
+int havecov;
 
   if((fpc=fopen(camsfname, "r"))==NULL){
     fprintf(stderr, "cannot open file %s, exiting\n", camsfname);
@@ -335,21 +404,30 @@ FILE *fpc, *fpp;
   }
 
   *ncams=findNcameras(fpc);
-  readNpointsAndNprojections(fpp, n3Dpts, pnp, n2Dprojs);
+  readNpointsAndNprojections(fpp, n3Dpts, pnp, n2Dprojs, mnp, &havecov);
 
   *motstruct=(double *)malloc((*ncams*cnp + *n3Dpts*pnp)*sizeof(double));
   if(*motstruct==NULL){
-    fprintf(stderr, "memory allocation failed in readInitialSBAEstimate()\n");
+    fprintf(stderr, "memory allocation for 'motstruct' failed in readInitialSBAEstimate()\n");
     exit(1);
   }
   *imgpts=(double *)malloc(*n2Dprojs*mnp*sizeof(double));
   if(*imgpts==NULL){
-    fprintf(stderr, "memory allocation failed in readInitialSBAEstimate()\n");
+    fprintf(stderr, "memory allocation for 'imgpts' failed in readInitialSBAEstimate()\n");
     exit(1);
   }
+  if(havecov){
+    *covimgpts=(double *)malloc(*n2Dprojs*mnp*mnp*sizeof(double));
+    if(*covimgpts==NULL){
+      fprintf(stderr, "memory allocation for 'covimgpts' failed in readInitialSBAEstimate()\n");
+      exit(1);
+    }
+  }
+  else
+    *covimgpts=NULL;
   *vmask=(char *)malloc(*n3Dpts * *ncams * sizeof(char));
   if(*vmask==NULL){
-    fprintf(stderr, "memory allocation failed in readInitialSBAEstimate()\n");
+    fprintf(stderr, "memory allocation for 'vmask' failed in readInitialSBAEstimate()\n");
     exit(1);
   }
   memset(*vmask, 0, *n3Dpts * *ncams * sizeof(char)); /* clear vmask */
@@ -360,7 +438,7 @@ FILE *fpc, *fpp;
   rewind(fpp);
 
   readCameraParams(fpc, cnp, infilter, filecnp, *motstruct);
-  readPointParamsAndProjections(fpp, *motstruct+*ncams*cnp, pnp, *imgpts, *vmask, *ncams);
+  readPointParamsAndProjections(fpp, *motstruct+*ncams*cnp, pnp, *imgpts, *covimgpts, havecov, mnp, *vmask, *ncams);
 
   fclose(fpc);
   fclose(fpp);

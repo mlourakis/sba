@@ -841,7 +841,7 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
                 void (*camoutfilter)(double *pin, int nin, double *pout, int nout),
                 int filecnp)
 {
-  double *motstruct, *motstruct_copy, *imgpts;
+  double *motstruct, *motstruct_copy, *imgpts, *covimgpts;
   double K[9], ical[5]; // intrinsic calibration matrix & temp. storage for its params
   char *vmask;
   double opts[SBA_OPTSSZ], info[SBA_INFOSZ], phi;
@@ -854,8 +854,9 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
   clock_t start_time, end_time;
 
 
+  /* NOTE: readInitialSBAEstimate() sets covimgpts to NULL if no covariances are supplied */
   readInitialSBAEstimate(camsfname, ptsfname, cnp, pnp, mnp, caminfilter, filecnp, //NULL, 0, 
-                         &nframes, &numpts3D, &numprojs, &motstruct, &imgpts, &vmask);
+                         &nframes, &numpts3D, &numprojs, &motstruct, &imgpts, &covimgpts, &vmask);
 
   //printSBAData(motstruct, cnp, pnp, mnp, camoutfilter, filecnp, nframes, numpts3D, imgpts, numprojs, vmask);
 
@@ -878,7 +879,7 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
      * 0: all free, 1: skew fixed, 2: skew, ar fixed, 4: skew, ar, ppt fixed
      * Note that a value of 3 does not make sense
      */
-    globs.nccalib=1; 
+    globs.nccalib=1;
     fixedcal=0; /* varying intrinsics */
   }
 
@@ -889,6 +890,8 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
   opts[0]=SBA_INIT_MU; opts[1]=SBA_STOP_THRESH; opts[2]=SBA_STOP_THRESH;
   opts[3]=SBA_STOP_THRESH;
   //opts[3]=0.05*numprojs; // uncomment to force termination if the average reprojection error drops below 0.05
+  opts[4]=0.0;
+  //opts[4]=1E-05; // uncomment to force termination if the relative reduction in the RMS reprojection error drops below 1E-05
 
   /* Notice the various BA options demonstrated below */
 
@@ -921,11 +924,11 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
     case BA_MOTSTRUCT: /* BA for motion & structure */
       nvars=nframes*cnp+numpts3D*pnp;
       if(expert)
-        n=sba_motstr_levmar_x(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, pnp, imgpts, mnp,
+        n=sba_motstr_levmar_x(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, pnp, imgpts, covimgpts, mnp,
                             fixedcal? img_projsRTS_x : img_projsKRTS_x, analyticjac? (fixedcal? img_projsRTS_jac_x : img_projsKRTS_jac_x) : NULL,
                             (void *)(&globs), 150, verbose, opts, info);
       else
-        n=sba_motstr_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, pnp, imgpts, mnp,
+        n=sba_motstr_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, pnp, imgpts, covimgpts, mnp,
                             fixedcal? img_projRTS : img_projKRTS, analyticjac? (fixedcal? img_projRTS_jac : img_projKRTS_jac) : NULL,
                             (void *)(&globs), 150, verbose, opts, info);
     break;
@@ -934,11 +937,11 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
       globs.ptparams=motstruct+nframes*cnp;
       nvars=nframes*cnp;
       if(expert)
-        n=sba_mot_levmar_x(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, mnp,
+        n=sba_mot_levmar_x(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, covimgpts, mnp,
                           fixedcal? img_projsRT_x : img_projsKRT_x, analyticjac? (fixedcal? img_projsRT_jac_x : img_projsKRT_jac_x) : NULL,
                           (void *)(&globs), MAXITER, verbose, opts, info);
       else
-        n=sba_mot_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, mnp,
+        n=sba_mot_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, covimgpts, mnp,
                           fixedcal? img_projRT : img_projKRT, analyticjac? (fixedcal? img_projRT_jac : img_projKRT_jac) : NULL,
                           (void *)(&globs), MAXITER, verbose, opts, info);
     break;
@@ -947,11 +950,11 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
       globs.camparams=motstruct;
       nvars=numpts3D*pnp;
       if(expert)
-        n=sba_str_levmar_x(numpts3D, nframes, vmask, motstruct+nframes*cnp, pnp, imgpts, mnp,
+        n=sba_str_levmar_x(numpts3D, nframes, vmask, motstruct+nframes*cnp, pnp, imgpts, covimgpts, mnp,
                           fixedcal? img_projsS_x : img_projsKS_x, analyticjac? (fixedcal? img_projsS_jac_x : img_projsKS_jac_x) : NULL,
                           (void *)(&globs), MAXITER, verbose, opts, info);
       else
-        n=sba_str_levmar(numpts3D, nframes, vmask, motstruct+nframes*cnp, pnp, imgpts, mnp,
+        n=sba_str_levmar(numpts3D, nframes, vmask, motstruct+nframes*cnp, pnp, imgpts, covimgpts, mnp,
                           fixedcal? img_projS : img_projKS, analyticjac? (fixedcal? img_projS_jac : img_projKS_jac) : NULL,
                           (void *)(&globs), MAXITER, verbose, opts, info);
     break;
@@ -967,11 +970,11 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
       nvars=nframes*cnp;
 
       if(expert)
-        n=sba_mot_levmar_x(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, mnp,
+        n=sba_mot_levmar_x(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, covimgpts, mnp,
                           fixedcal? img_projsRT_x : img_projsKRT_x, analyticjac? (fixedcal? img_projsRT_jac_x : img_projsKRT_jac_x) : NULL,
                           (void *)(&globs), MAXITER, verbose, opts, info);
       else
-        n=sba_mot_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, mnp,
+        n=sba_mot_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, covimgpts, mnp,
                         fixedcal? img_projRT : img_projKRT, analyticjac? (fixedcal? img_projRT_jac : img_projKRT_jac) : NULL,
                         (void *)(&globs), MAXITER, verbose, opts, info);
 
@@ -980,11 +983,11 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
         memcpy(motstruct, motstruct_copy, (nframes*cnp + numpts3D*pnp)*sizeof(double)); // reset starting point
 
         if(expert)
-          n=sba_motstr_levmar_x(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, pnp, imgpts, mnp,
+          n=sba_motstr_levmar_x(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, pnp, imgpts, NULL, mnp,
                                 fixedcal? img_projsRTS_x : img_projsKRTS_x, analyticjac? (fixedcal? img_projsRTS_jac_x : img_projsKRTS_jac_x) : NULL,
                                 (void *)(&globs), 150, verbose, opts, info);
         else
-          n=sba_motstr_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, pnp, imgpts, mnp,
+          n=sba_motstr_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, pnp, imgpts, NULL, mnp,
                               fixedcal? img_projRTS : img_projKRTS, analyticjac? (fixedcal? img_projRTS_jac : img_projKRTS_jac) : NULL,
                               (void *)(&globs), 150, verbose, opts, info);
       }
@@ -1001,10 +1004,11 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
 
 	fflush(stdout);
   fprintf(stdout, "SBA using %d 3D pts, %d frames and %d image projections, %d variables\n", numpts3D, nframes, numprojs, nvars);
-  fprintf(stdout, "\nMethod %s, %s driver, %s jacobian, %s intrinsics", howtoname[howto],
+  fprintf(stdout, "\nMethod %s, %s driver, %s Jacobian, %s intrinsics, %s covariances", howtoname[howto],
                   expert? "expert" : "simple",
                   analyticjac? "analytic" : "approximate",
-                  fixedcal? "fixed" : "variable");
+                  fixedcal? "fixed" : "variable",
+                  covimgpts? "with" : "without");
   if(globs.nccalib) fprintf(stdout, " (%d fixed)", globs.nccalib);
   fputs("\n\n", stdout); 
   fprintf(stdout, "SBA returned %d in %g iter, reason %g, error %g [initial %g], %d/%d func/fjac evals, %d lin. systems\n", n,
@@ -1044,6 +1048,7 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname, int cnp, int 
 
   free(motstruct);
   free(imgpts);
+  if(covimgpts) free(covimgpts);
   free(vmask);
 }
 
@@ -1105,7 +1110,7 @@ register int i;
     i=0;
 
   /* rotation */
-  /* recover the sternion's calar component from the vector one */
+  /* recover the quaternion's scalar component from the vector one */
   w=sqrt(1.0 - (inp[i]*inp[i] + inp[i+1]*inp[i+1] + inp[i+2]*inp[i+2]));
   outp[i]  =w;
   outp[i+1]=inp[i];
@@ -1123,7 +1128,7 @@ int main(int argc, char *argv[])
 {
 int cnp=6, /* 3 rot params + 3 trans params */
     pnp=3, /* euclidean 3D points */
-    mnp=2; /* img ponts are 2D */
+    mnp=2; /* image points are 2D */
 
   if(argc!=3 && argc!=4){
     fprintf(stderr, "Usage is %s <camera params> <point params> [<intrinsic calibration params>]\n", argv[0]);

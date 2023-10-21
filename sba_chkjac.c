@@ -2,7 +2,7 @@
 //// 
 ////  Verification routines for the jacobians employed in the expert & simple drivers
 ////  for sparse bundle adjustment based on the Levenberg - Marquardt minimization algorithm
-////  Copyright (C) 2005  Manolis Lourakis (lourakis@ics.forth.gr)
+////  Copyright (C) 2005-2008 Manolis Lourakis (lourakis at ics forth gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////
@@ -23,19 +23,13 @@
 #include <math.h>
 #include <float.h>
 
+#include "compiler.h"
 #include "sba.h"
 
 #define emalloc(sz)       emalloc_(__FILE__, __LINE__, sz)
 
 #define FABS(x)           (((x)>=0)? (x) : -(x))
 
-
-/* inline */
-#ifdef _MSC_VER
-#define inline __inline //MSVC
-#elif !defined(__GNUC__)
-#define inline //other than MSVC, GCC: define empty
-#endif
 
 /* auxiliary memory allocation routine with error checking */
 inline static void *emalloc_(char *file, int line, size_t sz)
@@ -44,7 +38,7 @@ void *ptr;
 
   ptr=(void *)malloc(sz);
   if(ptr==NULL){
-    fprintf(stderr, "memory allocation request for %u bytes failed in file %s, line %d, exiting", sz, file, line);
+    fprintf(stderr, "SBA: memory allocation request for %u bytes failed in file %s, line %d, exiting", sz, file, line);
     exit(1);
   }
 
@@ -205,13 +199,13 @@ int fvec_sz, pp_sz, fvecp_sz, numerr=0;
       ptr1=err + idxij->val[rcidxs[j]]*mnp; // set ptr1 to point into err
       for(ii=0; ii<mnp; ++ii)
         if(ptr1[ii]<=0.5){
-          fprintf(stderr, "Gradient %d (corresponding to element %d of the projection of point %d on camera %d) is %s (err=%g)\n",
+          fprintf(stderr, "SBA: gradient %d (corresponding to element %d of the projection of point %d on camera %d) is %s (err=%g)\n",
                   idxij->val[rcidxs[j]]*mnp+ii, ii, i, rcsubs[j], (ptr1[ii]==0.0)? "wrong" : "probably wrong", ptr1[ii]);
           ++numerr;
         }
     }
   }
-  if(numerr) fprintf(stderr, "Found %d suspicious gradients out of %d\n\n", numerr, nobs);
+  if(numerr) fprintf(stderr, "SBA: found %d suspicious gradients out of %d\n\n", numerr, nobs);
 
   free(err);
 
@@ -413,11 +407,11 @@ int fvec_sz, ajp_sz, bip_sz, fvecp_sz, err_sz, numerr=0;
 
   for(i=0; i<mnp; ++i)
     if(err[i]<=0.5){
-      fprintf(stderr, "Gradient %d (corresponding to element %d of the projection of point %d on camera %d) is %s (err=%g)\n",
+      fprintf(stderr, "SBA: gradient %d (corresponding to element %d of the projection of point %d on camera %d) is %s (err=%g)\n",
                 i, i, ii, jj, (err[i]==0.0)? "wrong" : "probably wrong", err[i]);
       ++numerr;
   }
-  if(numerr) fprintf(stderr, "Found %d suspicious gradients out of %d\n\n", numerr, mnp);
+  if(numerr) fprintf(stderr, "SBA: found %d suspicious gradients out of %d\n\n", numerr, mnp);
 
   free(fjac);
   free(buf);
