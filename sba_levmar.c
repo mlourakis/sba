@@ -152,7 +152,7 @@ double *ptr;
 /* Given a parameter vector p made up of the 3D coordinates of n points and the parameters of m cameras, compute in
  * jac the jacobian of the predicted measurements, i.e. the jacobian of the projections of 3D points in the m images.
  * The jacobian is approximated with the aid of finite differences and is returned in the order
- * (A_11, ..., A_1m, ..., A_n1, ..., A_nm, B_11, ..., B_1m, ..., B_n1, ..., B_nm),
+ * (A_11, B_11, ..., A_1m, B_1m, ..., A_n1, B_n1, ..., A_nm, B_nm),
  * where A_ij=dx_ij/da_j and B_ij=dx_ij/db_i (see HZ).
  * Notice that depending on idxij, some of the A_ij, B_ij might be missing
  *
@@ -191,9 +191,9 @@ static void sba_fdjac_x(
     void   *dat)              /* I: points to a "fdj_data_x_" structure */
 {
   register int i, j, ii, jj;
-  double *pa, *pb, *pqr, *ppt, *jaca, *jacb;
+  double *pa, *pb, *pqr, *ppt;
   register double *pAB, *phx, *phxx;
-  int n, m, nm, nnz, Asz, Bsz, idx;
+  int n, m, nm, nnz, Asz, Bsz, ABsz, idx;
 
   double *tmpd;
   register double d;
@@ -215,8 +215,7 @@ static void sba_fdjac_x(
 
   n=idxij->nr; m=idxij->nc;
   pa=p; pb=p+m*cnp;
-  Asz=mnp*cnp; Bsz=mnp*pnp;
-  jaca=jac; jacb=jac+idxij->nnz*Asz;
+  Asz=mnp*cnp; Bsz=mnp*pnp; ABsz=Asz+Bsz;
 
   nm=(n>=m)? n : m; // max(n, m);
   tmpd=(double *)emalloc(nm*sizeof(double));
@@ -249,7 +248,7 @@ static void sba_fdjac_x(
           idx=idxij->val[rcidxs[i]];
           phx=hx + idx*mnp; // set phx to point to hx_ij
           phxx=hxx + idx*mnp; // set phxx to point to hxx_ij
-          pAB=jaca + idx*Asz; // set pAB to point to A_ij
+          pAB=jac + idx*ABsz; // set pAB to point to A_ij
 
           for(ii=0; ii<mnp; ++ii)
             pAB[ii*cnp+jj]=(phxx[ii]-phx[ii])*d;
@@ -284,7 +283,7 @@ static void sba_fdjac_x(
           idx=idxij->val[rcidxs[j]];
           phx=hx + idx*mnp; // set phx to point to hx_ij
           phxx=hxx + idx*mnp; // set phxx to point to hxx_ij
-          pAB=jacb + idx*Bsz; // set pAB to point to B_ij
+          pAB=jac + idx*ABsz + Asz; // set pAB to point to B_ij
 
           for(ii=0; ii<mnp; ++ii)
             pAB[ii*pnp+jj]=(phxx[ii]-phx[ii])*d;
@@ -298,6 +297,8 @@ static void sba_fdjac_x(
 
 /* Bundle adjustment on camera and structure parameters 
  * using the sparse Levenberg-Marquardt as described in HZ p. 568
+ *
+ * Returns the number of iterations (>=0) if successfull, SBA_ERROR if failed
  */
 
 int sba_motstr_levmar_x(
@@ -331,7 +332,7 @@ int sba_motstr_levmar_x(
                                                * The Jacobian is returned in jac as
                                                * (dx_11/da_1, ..., dx_1m/da_m, ..., dx_n1/da_1, ..., dx_nm/da_m,
                                                *  dx_11/db_1, ..., dx_1m/db_1, ..., dx_n1/db_n, ..., dx_nm/db_n), or (using HZ's notation),
-                                               * jac=(A_11, ..., A_1m, ..., A_n1, ..., A_nm, B_11, ..., B_1m, ..., B_n1, ..., B_nm)
+                                               * jac=(A_11, B_11, ..., A_1m, B_1m, ..., A_n1, B_n1, ..., A_nm, B_nm)
                                                * Notice that depending on idxij, some of the A_ij and B_ij might be missing.
                                                * Note also that A_ij and B_ij are mnp x cnp and mnp x pnp matrices resp. and they
                                                * should be stored in jac in row-major order.
@@ -382,41 +383,43 @@ double *eab;  /* work array for storing the ea_j & eb_i in the order ea_1, .. ea
 double *E;   /* work array for storing the e_j in the order e_1, .. e_m, size m*cnp */
 
 /* Notice that the blocks W_ij, Y_ij are zero iff A_ij (equivalently B_ij) is zero. This means
- * that the matrices consisting of blocks W_ij and Y_ij are themselves sparse, similarly to the
- * block matrices made up of the A_ij and B_ij (i.e. jaca and jacb)
+ * that the matrix consisting of blocks W_ij is itself sparse, similarly to the
+ * block matrix made up of the A_ij and B_ij (i.e. jac)
  */
 double *W;    /* work array for storing the W_ij in the order W_11, ..., W_1m, ..., W_n1, ..., W_nm,
                  max. size n*m*cnp*pnp */
-double *Y;    /* work array for storing the Y_ij in the order Y_11, ..., Y_1m, ..., Y_n1, ..., Y_nm,
-                 max. size n*m*cnp*pnp */
+double *Yj;   /* work array for storing the Y_ij for a FIXED j in the order Y_1j, Y_nj,
+                 max. size n*cnp*pnp */
 double *YWt;  /* work array for storing \sum_i Y_ij W_ik^T, size cnp*cnp */
 double *S;    /* work array for storing the block array S_jk, size m*m*cnp*cnp */
 double *dp;   /* work array for storing the parameter vector updates da_1, ..., da_m, db_1, ..., db_n, size m*cnp + n*pnp */
 double *Wtda; /* work array for storing \sum_j W_ij^T da_j, size pnp */
 
-/* Of the above arrays, jac, e, W, Y are sparse and
- * U, V, V_1, eab, E, S, dp are dense. Sparse arrays are indexed through
- * idxij (see below), that is with the same mechanism as the input 
+/* Of the above arrays, jac, e, W, Yj are sparse and
+ * U, V, V_1, eab, E, S, dp are dense. Sparse arrays (except Yj) are indexed
+ * through idxij (see below), that is with the same mechanism as the input 
  * measurements vector x
  */
 
-double *pa, *pb, *jaca, *jacb, *ea, *eb, *dpa, *dpb; /* pointers into p, jac, eab and dp respectively */
+double *pa, *pb, *ea, *eb, *dpa, *dpb; /* pointers into p, jac, eab and dp respectively */
 
 /* submatrices sizes */
-int Asz, Bsz, Usz, Vsz,
+int Asz, Bsz, ABsz, Usz, Vsz,
     Wsz, Ysz, esz, easz, ebsz,
     YWtsz, Wtdasz, Sblsz;
 
 int Sdim; /* S matrix actual dimension */
 
 register double *ptr1, *ptr2, *ptr3, *ptr4, sum;
-struct sba_crsm idxij; /* sparse matrix containing the location of x_ij in x. This is also the location of A_ij 
-                        * in jaca, B_ij in jacb, etc.
+struct sba_crsm idxij; /* sparse matrix containing the location of x_ij in x. This is also
+                        * the location of A_ij, B_ij in jac, etc.
                         * This matrix can be thought as a map from a sparse set of pairs (i, j) to a continuous
                         * index k and it is used to efficiently lookup the memory locations where the non-zero
                         * blocks of a sparse matrix/vector are stored
                         */
-int maxnm=(n>=m)? n:m, /* max. of (n, m) */
+int maxCvis, /* max. of projections of a single point  across cameras, <=m */
+    maxPvis, /* max. of projections in a single camera across points,  <=n */
+    maxCPvis, /* max. of the above */
     *rcidxs,  /* work array for the indexes corresponding to the nonzero elements of a single row or
                  column in a sparse matrix, size max(n, m) */
     *rcsubs;  /* work array for the subscripts of nonzero elements in a single row or column of a
@@ -448,7 +451,7 @@ void *jac_adata;
 /* Initialization */
 
   /* block sizes */
-  Asz=mnp * cnp; Bsz=mnp * pnp;
+  Asz=mnp * cnp; Bsz=mnp * pnp; ABsz=Asz + Bsz;
   Usz=cnp * cnp; Vsz=pnp * pnp;
   Wsz=cnp * pnp; Ysz=cnp * pnp;
   esz=mnp;
@@ -460,46 +463,14 @@ void *jac_adata;
 
   /* count total number of visible image points */
   for(i=nvis=0, jj=n*m; i<jj; ++i)
-    nvis+=vmask[i];
+    nvis+=(vmask[i]!=0);
 
   nobs=nvis*mnp;
   nvars=m*cnp + n*pnp;
   if(nobs<nvars){
     fprintf(stderr, "sba_motstr_levmar_x(): cannot solve a problem with fewer measurements [%d] than unknowns [%d]\n", nobs, nvars);
-    exit(1);
+    return SBA_ERROR;
   }
-
-  /* allocate work arrays */
-  jac=(double *)emalloc(nvis*(Asz+Bsz)*sizeof(double));
-  U=(double *)emalloc(m*Usz*sizeof(double));
-  V=(double *)emalloc(n*Vsz*sizeof(double));
-  V_1=(double *)emalloc(n*Vsz*sizeof(double));
-  e=(double *)emalloc(nobs*sizeof(double));
-  eab=(double *)emalloc(nvars*sizeof(double));
-  E=(double *)emalloc(m*cnp*sizeof(double));
-  W=(double *)emalloc(nvis*Wsz*sizeof(double));
-  Y=(double *)emalloc(nvis*Ysz*sizeof(double));
-  YWt=(double *)emalloc(YWtsz*sizeof(double));
-  S=(double *)emalloc(m*m*Sblsz*sizeof(double));
-  dp=(double *)emalloc(nvars*sizeof(double));
-  Wtda=(double *)emalloc(pnp*sizeof(double));
-  rcidxs=(int *)emalloc(maxnm*sizeof(int));
-  rcsubs=(int *)emalloc(maxnm*sizeof(int));
-
-
-  hx=(double *)emalloc(nobs*sizeof(double));
-  diagUV=(double *)emalloc(nvars*sizeof(double));
-  pdp=(double *)emalloc(nvars*sizeof(double));
-
-
-  /* set up auxiliary pointers */
-  pa=p; pb=p+m*cnp;
-  jaca=jac; jacb=jac+nvis*Asz;
-  ea=eab; eb=eab+m*cnp;
-  dpa=dp; dpb=dp+m*cnp;
-
-  diagU=diagUV; diagV=diagUV + m*cnp;
-
 
   /* allocate & fill up the idxij structure */
   sba_crsm_alloc(&idxij, n, m, nvis);
@@ -514,6 +485,69 @@ void *jac_adata;
   }
   idxij.rowptr[n]=nvis;
 
+  /* find the maximum number (for all cameras) of visible image projections coming from a single 3D point */
+  for(i=maxCvis=0; i<n; ++i)
+    if((k=idxij.rowptr[i+1]-idxij.rowptr[i])>maxCvis) maxCvis=k;
+
+  /* find the maximum number (for all points) of visible image projections in any single camera */
+  for(j=maxPvis=0; j<m; ++j){
+    for(i=ii=0; i<n; ++i)
+      if(vmask[i*m+j]) ++ii;
+    if(ii>maxPvis) maxPvis=ii;
+  }
+  maxCPvis=(maxCvis>=maxPvis)? maxCvis : maxPvis;
+
+  /* allocate work arrays */
+  /* W is big enough to hold both jac & W. Note also the extra Wsz, see the initialization of jac below for explanation */
+  W=(double *)emalloc((nvis*((Wsz>=ABsz)? Wsz : ABsz) + Wsz)*sizeof(double));
+  U=(double *)emalloc(m*Usz*sizeof(double));
+  V=(double *)emalloc(n*Vsz*sizeof(double));
+  V_1=(double *)emalloc(n*Vsz*sizeof(double));
+  e=(double *)emalloc(nobs*sizeof(double));
+  eab=(double *)emalloc(nvars*sizeof(double));
+  E=(double *)emalloc(m*cnp*sizeof(double));
+  Yj=(double *)emalloc(maxPvis*Ysz*sizeof(double));
+  YWt=(double *)emalloc(YWtsz*sizeof(double));
+  S=(double *)emalloc(m*m*Sblsz*sizeof(double));
+  dp=(double *)emalloc(nvars*sizeof(double));
+  Wtda=(double *)emalloc(pnp*sizeof(double));
+  rcidxs=(int *)emalloc(maxCPvis*sizeof(int));
+  rcsubs=(int *)emalloc(maxCPvis*sizeof(int));
+
+
+  hx=(double *)emalloc(nobs*sizeof(double));
+  diagUV=(double *)emalloc(nvars*sizeof(double));
+  pdp=(double *)emalloc(nvars*sizeof(double));
+
+  /* to save resources, W and jac share the same memory: First, the jacobian
+   * is computed in some working memory that is then overwritten during the
+   * computation of W. To account for the case of W being larger than jac,
+   * extra memory is reserved "before" jac.
+   * Care must be taken, however, to ensure that storing a certain W_ij
+   * does not overwrite the A_ij, B_ij used to compute it. To achieve
+   * this is, note that if p1 and p2 respectively point to the first elements
+   * of a certain W_ij and A_ij, B_ij pair, we should have p2-p1>=Wsz.
+   * There are two cases:
+   * a) Wsz>=ABsz: Then p1=W+k*Wsz and p2=jac+k*ABsz=W+Wsz+nvis*(Wsz-ABsz)+k*ABsz
+   *    for some k (0<=k<nvis), thus p2-p1=(nvis-k)*(Wsz-ABsz)+Wsz. 
+   *    The right side of the last equation is obviously > Wsz for all 0<=k<nvis
+   *
+   * b) Wsz<ABsz: Then p1=W+k*Wsz and p2=jac+k*ABsz=W+Wsz+k*ABsz and
+   *    p2-p1=Wsz+k*(ABsz-Wsz), which is again > Wsz for all 0<=k<nvis
+   *
+   * Concluding, if jac is initialized as below, the memory allocated to all
+   * W_ij is guaranteed not to overlap with that allocated to their corresponding
+   * A_ij, B_ij pairs
+   */
+  jac=W + Wsz + ((Wsz>ABsz)? nvis*(Wsz-ABsz) : 0);
+
+  /* set up auxiliary pointers */
+  pa=p; pb=p+m*cnp;
+  ea=eab; eb=eab+m*cnp;
+  dpa=dp; dpb=dp+m*cnp;
+
+  diagU=diagUV; diagV=diagUV + m*cnp;
+
   /* if no jacobian function is supplied, prepare to compute jacobian with finite difference */
   if(!fjac){
     fdj_data.func=func;
@@ -522,8 +556,8 @@ void *jac_adata;
     fdj_data.mnp=mnp;
     fdj_data.hx=hx;
     fdj_data.hxx=(double *)emalloc(nobs*sizeof(double));
-    fdj_data.func_rcidxs=(int *)emalloc(2*maxnm*sizeof(int));
-    fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxnm;
+    fdj_data.func_rcidxs=(int *)emalloc(2*maxCPvis*sizeof(int));
+    fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxCPvis;
     fdj_data.adata=adata;
 
     fjac=sba_fdjac_x;
@@ -574,7 +608,7 @@ void *jac_adata;
       nnz=sba_crsm_col_elmidxs(&idxij, j, rcidxs, rcsubs); /* find nonzero A_ij, i=0...n-1 */
       for(i=0; i<nnz; ++i){
         /* set ptr3 to point to A_ij, actual row number in rcsubs[i] */
-        ptr3=jaca + idxij.val[rcidxs[i]]*Asz;
+        ptr3=jac + idxij.val[rcidxs[i]]*ABsz;
 
         /* compute the UPPER TRIANGULAR PART of A_ij^T A_ij and add it to U_j */
         for(ii=0; ii<cnp; ++ii){
@@ -616,7 +650,7 @@ void *jac_adata;
       nnz=sba_crsm_row_elmidxs(&idxij, i, rcidxs, rcsubs); /* find nonzero B_ij, j=0...m-1 */
       for(j=0; j<nnz; ++j){
         /* set ptr3 to point to B_ij, actual column number in rcsubs[j] */
-        ptr3=jacb + idxij.val[rcidxs[j]]*Bsz;
+        ptr3=jac + idxij.val[rcidxs[j]]*ABsz + Asz;
       
         /* compute the UPPER TRIANGULAR PART of B_ij^T B_ij and add it to V_i */
         for(ii=0; ii<pnp; ++ii){
@@ -644,18 +678,25 @@ void *jac_adata;
     /* compute W_ij =  A_ij^T B_ij */ // \Sigma here!
     /* Recall that A_ij is mnp x cnp and B_ij is mnp x pnp
      */
-    _dblzero(W, nvis*Wsz); /* clear all W_ij */
     for(i=0; i<n; ++i){
       nnz=sba_crsm_row_elmidxs(&idxij, i, rcidxs, rcsubs); /* find nonzero W_ij, j=0...m-1 */
       for(j=0; j<nnz; ++j){
         /* set ptr1 to point to W_ij, actual column number in rcsubs[j] */
-        if(rcsubs[j]<mcon) continue; /* A_ij is zero */
-
         ptr1=W + idxij.val[rcidxs[j]]*Wsz;
+
+        if(rcsubs[j]<mcon){ /* A_ij is zero */
+          _dblzero(ptr1, Wsz); /* clear W_ij */
+          continue;
+        }
+
         /* set ptr2 & ptr3 to point to A_ij & B_ij resp. */
-        ptr2=jaca + idxij.val[rcidxs[j]]*Asz;
-        ptr3=jacb + idxij.val[rcidxs[j]]*Bsz;
-        /* compute A_ij^T B_ij and store it in W_ij */
+        ptr2=jac  + idxij.val[rcidxs[j]]*ABsz;
+        ptr3=ptr2 + Asz;
+        /* compute A_ij^T B_ij and store it in W_ij
+         * Recall that storage for A_ij, B_ij does not overlap with that for W_ij,
+         * see the comments related to the initialization of jac above
+         */
+        /* assert(ptr2-ptr1>=Wsz); */
         for(ii=0; ii<cnp; ++ii)
           for(jj=0; jj<pnp; ++jj){
             for(k=0, sum=0.0; k<mnp; ++k)
@@ -731,10 +772,13 @@ if(!(itno%100)){
         //j=sba_mat_invert_Chol(ptr1, ptr2, pnp); //invert the pnp x pnp matrix pointed to by ptr1 and save it in ptr2
 		    if(!j){
 			    fprintf(stderr, "Singular matrix V*_i (i=%d) in sba_motstr_levmar_x()\n", i);
-			    exit(1);
+			    //exit(1);
+          retval=SBA_ERROR;
+          goto freemem_and_return;
 		    }
       }
 
+#if 0
       /* compute Y_ij = W_ij (V*_i)^-1
        * Recall that W_ij is cnp x pnp and (V*_i) is pnp x pnp
        */
@@ -759,6 +803,7 @@ if(!(itno%100)){
             }
         }
       }
+#endif
 
       _dblzero(E, m*easz); /* clear all e_j */
       /* compute the mmcon x mmcon block matrix S and e_j */
@@ -768,7 +813,34 @@ if(!(itno%100)){
        * it for the lower one.
 		   */
       for(j=mcon; j<m; ++j){
+        int mmconxUsz=mmcon*Usz;
+
 		    nnz=sba_crsm_col_elmidxs(&idxij, j, rcidxs, rcsubs); /* find nonzero Y_ij, i=0...n-1 */
+
+        /* compute all Y_ij = W_ij (V*_i)^-1 for a FIXED j.
+         * To save memory, the block matrix consisting of the Y_ij
+         * is not stored. Instead, only a block column of this matrix
+         * is computed & used at each time: For each j, all nonzero
+         * Y_ij are computed in Yj and then used in the calculations
+         * involving S_jk and e_j.
+         * Recall that W_ij is cnp x pnp and (V*_i) is pnp x pnp
+         */
+        for(i=0; i<nnz; ++i){
+          /* set ptr3 to point to (V*_i)^-1, actual row number in rcsubs[i] */
+          ptr3=V_1 + rcsubs[i]*Vsz;
+
+          /* set ptr1 to point to Y_ij, actual row number in rcsubs[i] */
+          ptr1=Yj + i*Ysz;
+          /* set ptr2 to point to W_ij resp. */
+          ptr2=W + idxij.val[rcidxs[i]]*Wsz;
+          /* compute W_ij (V*_i)^-1 and store it in Y_ij */
+          for(ii=0; ii<cnp; ++ii)
+            for(jj=0; jj<pnp; ++jj){
+              for(k=0, sum=0.0; k<pnp; ++k)
+                sum+=ptr2[ii*pnp+k]*ptr3[k*pnp+jj];
+              ptr1[ii*pnp+jj]=sum;
+            }
+        }
 
         /* compute the UPPER TRIANGULAR PART of S */
         for(k=j; k<m; ++k){ // j>=mcon
@@ -793,7 +865,7 @@ if(!(itno%100)){
 
             ptr2=W + idxij.val[l]*Wsz;
             /* set ptr1 to point to Y_ij, actual row number in rcsubs[i] */
-            ptr1=Y + idxij.val[rcidxs[i]]*Ysz;
+            ptr1=Yj + i*Ysz;
             for(ii=0; ii<cnp; ++ii){
               ptr3=ptr1+ii*pnp;
               pYWt=YWt+ii*cnp;
@@ -806,17 +878,15 @@ if(!(itno%100)){
               }
             }
           }
-
-          ptr1=U + j*Usz; // set ptr1 to point to U_j
 		  
 		      /* since the linear system involving S is solved with lapack,
 		       * it is preferable to store S in column major (i.e. fortran)
 		       * order, so as to avoid unecessary transposing/copying.
            */
 #if MAT_STORAGE==COLUMN_MAJOR
-          ptr2=S + (k-mcon)*mmcon*Usz + (j-mcon)*cnp; // set ptr2 to point to the beginning of block j,k in S
+          ptr2=S + (k-mcon)*mmconxUsz + (j-mcon)*cnp; // set ptr2 to point to the beginning of block j,k in S
 #else
-          ptr2=S + (j-mcon)*mmcon*Usz + (k-mcon)*cnp; // set ptr2 to point to the beginning of block j,k in S
+          ptr2=S + (j-mcon)*mmconxUsz + (k-mcon)*cnp; // set ptr2 to point to the beginning of block j,k in S
 #endif
 		  
           if(j!=k){ /* Kronecker */
@@ -830,6 +900,8 @@ if(!(itno%100)){
 #endif
           }
           else{
+            ptr1=U + j*Usz; // set ptr1 to point to U_j
+
             for(ii=0; ii<cnp; ++ii, ptr2+=Sdim)
               for(jj=0; jj<cnp; ++jj)
                 ptr2[jj]=
@@ -844,11 +916,11 @@ if(!(itno%100)){
         /* copy the LOWER TRIANGULAR PART of S from the upper one */
         for(k=mcon; k<j; ++k){
 #if MAT_STORAGE==COLUMN_MAJOR
-          ptr1=S + (k-mcon)*mmcon*Usz + (j-mcon)*cnp; // set ptr1 to point to the beginning of block j,k in S
-          ptr2=S + (j-mcon)*mmcon*Usz + (k-mcon)*cnp; // set ptr2 to point to the beginning of block k,j in S
+          ptr1=S + (k-mcon)*mmconxUsz + (j-mcon)*cnp; // set ptr1 to point to the beginning of block j,k in S
+          ptr2=S + (j-mcon)*mmconxUsz + (k-mcon)*cnp; // set ptr2 to point to the beginning of block k,j in S
 #else
-          ptr1=S + (j-mcon)*mmcon*Usz + (k-mcon)*cnp; // set ptr1 to point to the beginning of block j,k in S
-          ptr2=S + (k-mcon)*mmcon*Usz + (j-mcon)*cnp; // set ptr2 to point to the beginning of block k,j in S
+          ptr1=S + (j-mcon)*mmconxUsz + (k-mcon)*cnp; // set ptr1 to point to the beginning of block j,k in S
+          ptr2=S + (k-mcon)*mmconxUsz + (j-mcon)*cnp; // set ptr2 to point to the beginning of block k,j in S
 #endif
           for(ii=0; ii<cnp; ++ii, ptr1+=Sdim)
             for(jj=0, ptr3=ptr2+ii; jj<cnp; ++jj, ptr3+=Sdim)
@@ -861,7 +933,7 @@ if(!(itno%100)){
 
         for(i=0; i<nnz; ++i){
           /* set ptr2 to point to Y_ij, actual row number in rcsubs[i] */
-          ptr2=Y + idxij.val[rcidxs[i]]*Ysz;
+          ptr2=Yj + i*Ysz;
 
           /* set ptr3 to point to eb_i */
           ptr3=eb + rcsubs[i]*ebsz;
@@ -882,8 +954,7 @@ if(!(itno%100)){
       if(verbose>1){ /* count the nonzeros in S */
         for(i=ii=0; i<Sdim*Sdim; ++i)
           if(S[i]!=0.0) ++ii;
-        printf("\nS density %10g\n", ((double)ii)/(Sdim*Sdim));
-
+        printf("\nS density %10g\n", ((double)ii)/(Sdim*Sdim)); fflush(stdout);
       }
 #endif
 
@@ -1067,16 +1138,15 @@ if(!(itno%100)){
   }
                                                                
   //sba_print_sol(n, m, p, cnp, pnp, x, mnp, &idxij, rcidxs, rcsubs);
-  retval=(stop!=4)?  itno : -1;
+  retval=(stop!=4)?  itno : SBA_ERROR;
 
 freemem_and_return: /* NOTE: this point is also reached via a goto! */
 
    /* free whatever was allocated */
-  free(jac); free(U); free(V);
-  free(V_1); free(e); free(eab);  
-  free(E);   free(W); free(Y);          
-  free(YWt); free(S); free(dp);               
-  free(Wtda);
+  free(W);   free(U);  free(V);
+  free(V_1); free(e);  free(eab);
+  free(E);   free(Yj); free(YWt);
+  free(S);   free(dp); free(Wtda);
   free(rcidxs); free(rcsubs);
 
   free(hx); free(diagUV); free(pdp);
@@ -1093,6 +1163,8 @@ freemem_and_return: /* NOTE: this point is also reached via a goto! */
 
 /* Bundle adjustment on camera parameters only 
  * using the sparse Levenberg-Marquardt as described in HZ p. 568
+ *
+ * Returns the number of iterations (>=0) if successfull, SBA_ERROR if failed
  */
 
 int sba_mot_levmar_x(
@@ -1187,7 +1259,7 @@ struct sba_crsm idxij; /* sparse matrix containing the location of x_ij in x. Th
                         * index k and it is used to efficiently lookup the memory locations where the non-zero
                         * blocks of a sparse matrix/vector are stored
                         */
-int maxnm=(n>=m)? n:m, /* max. of (n, m) */
+int maxCPvis, /* max. of projections across cameras & projections across points */
     *rcidxs,  /* work array for the indexes corresponding to the nonzero elements of a single row or
                  column in a sparse matrix, size max(n, m) */
     *rcsubs;  /* work array for the subscripts of nonzero elements in a single row or column of a
@@ -1221,28 +1293,14 @@ void *jac_adata;
   
   /* count total number of visible image points */
   for(i=nvis=0, jj=n*m; i<jj; ++i)
-    nvis+=vmask[i];
+    nvis+=(vmask[i]!=0);
 
   nobs=nvis*mnp;
   nvars=m*cnp;
   if(nobs<nvars){
     fprintf(stderr, "sba_mot_levmar_x(): cannot solve a problem with fewer measurements [%d] than unknowns [%d]\n", nobs, nvars);
-    exit(1);
+    return SBA_ERROR;
   }
-
-  /* allocate work arrays */
-  jac=(double *)emalloc(nvis*Asz*sizeof(double));
-  U=(double *)emalloc(m*Usz*sizeof(double));
-  e=(double *)emalloc(nobs*sizeof(double));
-  ea=(double *)emalloc(nvars*sizeof(double));
-  dp=(double *)emalloc(nvars*sizeof(double));
-  rcidxs=(int *)emalloc(maxnm*sizeof(int));
-  rcsubs=(int *)emalloc(maxnm*sizeof(int));
-
-
-  hx=(double *)emalloc(nobs*sizeof(double));
-  diagU=(double *)emalloc(nvars*sizeof(double));
-  pdp=(double *)emalloc(nvars*sizeof(double));
 
   /* allocate & fill up the idxij structure */
   sba_crsm_alloc(&idxij, n, m, nvis);
@@ -1257,6 +1315,32 @@ void *jac_adata;
   }
   idxij.rowptr[n]=nvis;
 
+  /* find the maximum number of visible image points in any single camera or coming from a single 3D point */
+  /* cameras */
+  for(i=maxCPvis=0; i<n; ++i)
+    if((k=idxij.rowptr[i+1]-idxij.rowptr[i])>maxCPvis) maxCPvis=k;
+
+  /* points, note that maxCPvis is not reinitialized! */
+  for(j=0; j<m; ++j){
+    for(i=ii=0; i<n; ++i)
+      if(vmask[i*m+j]) ++ii;
+    if(ii>maxCPvis) maxCPvis=ii;
+  }
+
+  /* allocate work arrays */
+  jac=(double *)emalloc(nvis*Asz*sizeof(double));
+  U=(double *)emalloc(m*Usz*sizeof(double));
+  e=(double *)emalloc(nobs*sizeof(double));
+  ea=(double *)emalloc(nvars*sizeof(double));
+  dp=(double *)emalloc(nvars*sizeof(double));
+  rcidxs=(int *)emalloc(maxCPvis*sizeof(int));
+  rcsubs=(int *)emalloc(maxCPvis*sizeof(int));
+
+
+  hx=(double *)emalloc(nobs*sizeof(double));
+  diagU=(double *)emalloc(nvars*sizeof(double));
+  pdp=(double *)emalloc(nvars*sizeof(double));
+
   /* if no jacobian function is supplied, prepare to compute jacobian with finite difference */
   if(!fjac){
     fdj_data.func=func;
@@ -1265,8 +1349,8 @@ void *jac_adata;
     fdj_data.mnp=mnp;
     fdj_data.hx=hx;
     fdj_data.hxx=(double *)emalloc(nobs*sizeof(double));
-    fdj_data.func_rcidxs=(int *)emalloc(2*maxnm*sizeof(int));
-    fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxnm;
+    fdj_data.func_rcidxs=(int *)emalloc(2*maxCPvis*sizeof(int));
+    fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxCPvis;
     fdj_data.adata=adata;
 
     fjac=sba_fdjac_x;
@@ -1516,7 +1600,7 @@ if(!(itno%100)){
     info[9]=nlss;
   }
   //sba_print_sol(n, m, p, cnp, 0, x, mnp, &idxij, rcidxs, rcsubs);
-  retval=(stop!=4)?  itno : -1;
+  retval=(stop!=4)?  itno : SBA_ERROR;
                                                                
 freemem_and_return: /* NOTE: this point is also reached via a goto! */
 
@@ -1540,6 +1624,8 @@ freemem_and_return: /* NOTE: this point is also reached via a goto! */
 
 /* Bundle adjustment on structure parameters only 
  * using the sparse Levenberg-Marquardt as described in HZ p. 568
+ *
+ * Returns the number of iterations (>=0) if successfull, SBA_ERROR if failed
  */
 
 int sba_str_levmar_x(
@@ -1631,7 +1717,7 @@ struct sba_crsm idxij; /* sparse matrix containing the location of x_ij in x. Th
                         * index k and it is used to efficiently lookup the memory locations where the non-zero
                         * blocks of a sparse matrix/vector are stored
                         */
-int maxnm=(n>=m)? n:m, /* max. of (n, m) */
+int maxCPvis, /* max. of projections across cameras & projections across points */
     *rcidxs,  /* work array for the indexes corresponding to the nonzero elements of a single row or
                  column in a sparse matrix, size max(n, m) */
     *rcsubs;  /* work array for the subscripts of nonzero elements in a single row or column of a
@@ -1665,28 +1751,14 @@ void *jac_adata;
 
   /* count total number of visible image points */
   for(i=nvis=0, jj=n*m; i<jj; ++i)
-    nvis+=vmask[i];
+    nvis+=(vmask[i]!=0);
 
   nobs=nvis*mnp;
   nvars=n*pnp;
   if(nobs<nvars){
     fprintf(stderr, "sba_str_levmar_x(): cannot solve a problem with fewer measurements [%d] than unknowns [%d]\n", nobs, nvars);
-    exit(1);
+    return SBA_ERROR;
   }
-
-  /* allocate work arrays */
-  jac=(double *)emalloc(nvis*Bsz*sizeof(double));
-  V=(double *)emalloc(n*Vsz*sizeof(double));
-  e=(double *)emalloc(nobs*sizeof(double));
-  eb=(double *)emalloc(nvars*sizeof(double));
-  dp=(double *)emalloc(nvars*sizeof(double));
-  rcidxs=(int *)emalloc(maxnm*sizeof(int));
-  rcsubs=(int *)emalloc(maxnm*sizeof(int));
-
-
-  hx=(double *)emalloc(nobs*sizeof(double));
-  diagV=(double *)emalloc(nvars*sizeof(double));
-  pdp=(double *)emalloc(nvars*sizeof(double));
 
   /* allocate & fill up the idxij structure */
   sba_crsm_alloc(&idxij, n, m, nvis);
@@ -1701,6 +1773,32 @@ void *jac_adata;
   }
   idxij.rowptr[n]=nvis;
 
+  /* find the maximum number of visible image points in any single camera or coming from a single 3D point */
+  /* cameras */
+  for(i=maxCPvis=0; i<n; ++i)
+    if((k=idxij.rowptr[i+1]-idxij.rowptr[i])>maxCPvis) maxCPvis=k;
+
+  /* points, note that maxCPvis is not reinitialized! */
+  for(j=0; j<m; ++j){
+    for(i=ii=0; i<n; ++i)
+      if(vmask[i*m+j]) ++ii;
+    if(ii>maxCPvis) maxCPvis=ii;
+  }
+
+  /* allocate work arrays */
+  jac=(double *)emalloc(nvis*Bsz*sizeof(double));
+  V=(double *)emalloc(n*Vsz*sizeof(double));
+  e=(double *)emalloc(nobs*sizeof(double));
+  eb=(double *)emalloc(nvars*sizeof(double));
+  dp=(double *)emalloc(nvars*sizeof(double));
+  rcidxs=(int *)emalloc(maxCPvis*sizeof(int));
+  rcsubs=(int *)emalloc(maxCPvis*sizeof(int));
+
+
+  hx=(double *)emalloc(nobs*sizeof(double));
+  diagV=(double *)emalloc(nvars*sizeof(double));
+  pdp=(double *)emalloc(nvars*sizeof(double));
+
   /* if no jacobian function is supplied, prepare to compute jacobian with finite difference */
   if(!fjac){
     fdj_data.func=func;
@@ -1709,8 +1807,8 @@ void *jac_adata;
     fdj_data.mnp=mnp;
     fdj_data.hx=hx;
     fdj_data.hxx=(double *)emalloc(nobs*sizeof(double));
-    fdj_data.func_rcidxs=(int *)emalloc(2*maxnm*sizeof(int));
-    fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxnm;
+    fdj_data.func_rcidxs=(int *)emalloc(2*maxCPvis*sizeof(int));
+    fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxCPvis;
     fdj_data.adata=adata;
 
     fjac=sba_fdjac_x;
@@ -1959,7 +2057,7 @@ if(!(itno%100)){
     info[9]=nlss;
   }
   //sba_print_sol(n, m, p, 0, pnp, x, mnp, &idxij, rcidxs, rcsubs);
-  retval=(stop!=4)?  itno : -1;
+  retval=(stop!=4)?  itno : SBA_ERROR;
                                                                
 freemem_and_return: /* NOTE: this point is also reached via a goto! */
 

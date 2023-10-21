@@ -1,6 +1,6 @@
     **************************************************************
                                  SBA 
-                              version 1.3
+                              version 1.4
                           By Manolis Lourakis
 
                      Institute of Computer Science
@@ -51,6 +51,7 @@ sba_crsm.c: CRS sparse matrix manipulation routines
 sba_chkjac.c: routines for verifying the correctness of user-supplied jacobians
 sba.h: Function prototypes & related data structures
 demo/*: Euclidean BA demo; see demo/README.txt for more details
+matlab/*: sba MEX-file interface; see matlab/README.txt for more details
 utils/*: Various utilities; see utils/README.txt for more details
 
 ==================== COMPILING ====================

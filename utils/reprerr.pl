@@ -25,11 +25,12 @@
 #################################################################################
 # Initializations
 
-$usage="Usage is $0 -e|-p [-s,-h] <cams file> <pts file> [<calib file>]";
-$help="-e specifies a quaternion-based Euclidean reconstruction and -p a projective one.\n"
+$usage="Usage is $0 -e|-i|-p [-s,-h] <cams file> <pts file> [<calib file>]";
+$help="-e specifies a quaternion-based Euclidean reconstruction with fixed intrinsics,\n-i a Euclidean reconstruction with varying intrinsics and -p a projective one.\n"
 ."-s computes the average *squared* reprojection error.";
-use constant EUCBA => 0;
-use constant PROJBA => 1;
+use constant EUCBA => 0; # Euclidean BA, fixed intrinsics
+use constant EUCIBA => 1; # Euclidean BA, varying intrinsics
+use constant PROJBA => 2; # Projective BA
 $cnp=$pnp=0;
 $camsfile=$ptsfile=$calfile="";
 $CamMat_Generate=\&dont_know;
@@ -38,13 +39,15 @@ $CamMat_Generate=\&dont_know;
 # Basic arguments parsing
 
 use Getopt::Std;
-getopts("epsh", \%opt) or die "$usage\n";
+getopts("eipsh", \%opt) or die "$usage\n";
 die "$0 help: Compute the average reprojection error for some reconstruction.\n$usage\n$help\n" if($opt{h});
 
-if($opt{e} && $opt{p}){
+if($opt{e}+$opt{i}+$opt{p}!=1){
     die "$0: Only one of -e, -p can be specified!\n";
 } elsif($opt{e}){
     $batype=EUCBA;
+} elsif($opt{i}){
+    $batype=EUCIBA;
 } elsif($opt{p}){
     $batype=PROJBA;
 }
@@ -59,7 +62,15 @@ if($batype==EUCBA){
     $camsfile=$ARGV[0];
     $ptsfile=$ARGV[1];
     $calfile=$ARGV[2];
-    $CamMat_Generate=\&PfromKRt;
+    $CamMat_Generate=\&PfromRtK;
+}
+elsif($batype==EUCIBA){
+    $cnp=7+5; $pnp=3;
+    die "$0: Cameras or points file is missing!\n$usage" if(@ARGV<2);
+    die "$0: Too many arguments!\n$usage" if(@ARGV>2);
+    $camsfile=$ARGV[0];
+    $ptsfile=$ARGV[1];
+    $CamMat_Generate=\&PfromRtVarK;
 }
 elsif($batype==PROJBA){ 
     $cnp=12; $pnp=4;
@@ -97,7 +108,7 @@ die "$0: Do not know how to handle $pnp parameters per point!\n" if($pnp!=3 && $
 	    print STDERR "cannot open file $calfile: $!\n";
 	    exit(1);
     }
-    for($i=0; $i<3; $i++){
+    for($i=0; $i<3; ){ # $i gets incremented at the bottom of the loop
       $line=<CAL>;
       if($line=~/\r\n$/){ # CR+LF
         chop($line); chop($line);
@@ -105,9 +116,13 @@ die "$0: Do not know how to handle $pnp parameters per point!\n" if($pnp!=3 && $
       else{
         chomp($line);
       }
+
+      next if($line=~/^#.+/); # skip comments
+
       @columns=split(" ", $line);
       die "line \"$line\" in $calfile does not contain exactly 3 numbers [$#columns+1]!\n" if($#columns+1!=3);
       $camCal[$i*3]=$columns[0]; $camCal[$i*3+1]=$columns[1]; $camCal[$i*3+2]=$columns[2];
+      $i++;
     }
     close(CAL);
   }
@@ -210,7 +225,7 @@ if(0){
 }
 
 # compute reprojection error
-  unless ($batype==EUCBA || $batype==PROJBA){
+  unless ($batype==EUCBA || $batype==EUCIBA || $batype==PROJBA){
     die "current implementation of reprError() cannot handle supplied reconstruction data!\n";
   }
 
@@ -282,7 +297,7 @@ sub nop {
 }
 
 # Compute P as K[R|t]. R is specified by the first 4 elements of $camparms, while t corresponds to the last 3 ones
-sub PfromKRt {
+sub PfromRtK {
   my ($camid, $camparms, $calparams)=@_;
 
   my $x, $y, $z, $w, $xx, $xy, $xz, $xw, $yy, $yz, $yw, $zz, $zw, $ww, $i, $j, $k;
@@ -316,4 +331,22 @@ sub PfromKRt {
   }
 
   return [@P];
+}
+
+# Compute P as K[R|t]. K is specified by the first 5 elements of $camparms, while R and t correspond to the next 4 & 3 elements, respectively
+sub PfromRtVarK {
+  my ($camid, $camparms)=@_;
+  my @K=(), @poseparams=(), $size, $i;
+
+  # setup the intrinsics matrix from the 5 first elements
+  $K[0]=$camparms->[0]; $K[1]=$camparms->[4];                $K[2]=$camparms->[1];
+  $K[3]=0.0;            $K[4]=$camparms->[3]*$camparms->[0]; $K[5]=$camparms->[2];
+  $K[6]=0.0;            $K[7]=0.0;                           $K[8]=1.0;
+
+  $size=scalar(@$camparms);
+  for($i=5; $i<$size; $i++){
+    $poseparams[$i-5]=$camparms->[$i];
+  }
+
+  &PfromRtK($camid, [@poseparams], [@K]);
 }

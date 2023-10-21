@@ -102,7 +102,7 @@ void sba_motstr_chkjac_x(
 const double factor=100.0, one=1.0, zero=0.0;
 double *fvec, *fjac, *pp, *fvecp, *buf, *err;
 
-int nvars, nobs, m, n, Asz, Bsz, nnz;
+int nvars, nobs, m, n, Asz, Bsz, ABsz, nnz;
 register int i, j, ii, jj;
 double eps, epsf, temp, epsmch, epslog;
 register double *ptr1, *ptr2, *pab;
@@ -115,8 +115,8 @@ int fvec_sz, pp_sz, fvecp_sz, numerr=0;
   epsmch=DBL_EPSILON;
   eps=sqrt(epsmch);
 
-  Asz=mnp*cnp; Bsz=mnp*pnp;
-  fjac=(double *)emalloc(idxij->nnz*(Asz+Bsz)*sizeof(double));
+  Asz=mnp*cnp; Bsz=mnp*pnp; ABsz=Asz+Bsz;
+  fjac=(double *)emalloc(idxij->nnz*ABsz*sizeof(double));
 
   fvec_sz=fvecp_sz=nobs;
   pp_sz=nvars;
@@ -159,7 +159,7 @@ int fvec_sz, pp_sz, fvecp_sz, numerr=0;
       ptr2=err + idxij->val[rcidxs[j]]*mnp; // set ptr2 to point into err
 
       if(cnp){
-        ptr1=fjac + idxij->val[rcidxs[j]]*Asz; // set ptr1 to point to A_ij
+        ptr1=fjac + idxij->val[rcidxs[j]]*ABsz; // set ptr1 to point to A_ij
         pab=pa + rcsubs[j]*cnp;
         for(jj=0; jj<cnp; ++jj){
           temp=FABS(pab[jj]);
@@ -171,7 +171,7 @@ int fvec_sz, pp_sz, fvecp_sz, numerr=0;
       }
 
       if(pnp){
-        ptr1=fjac + idxij->nnz*Asz + idxij->val[rcidxs[j]]*Bsz; // set ptr1 to point to B_ij
+        ptr1=fjac + idxij->val[rcidxs[j]]*ABsz + Asz; // set ptr1 to point to B_ij
         pab=pb + i*pnp;
         for(jj=0; jj<pnp; ++jj){
           temp=FABS(pab[jj]);

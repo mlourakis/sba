@@ -1,3 +1,4 @@
+/*
 /////////////////////////////////////////////////////////////////////////////////
 //// 
 ////  Prototypes and definitions for sparse bundle adjustment
@@ -16,6 +17,7 @@
 ////  GNU General Public License for more details.
 ////
 ///////////////////////////////////////////////////////////////////////////////////
+*/
 
 #ifndef _SBA_H_
 #define _SBA_H_
@@ -31,12 +33,13 @@ extern "C" {
 
 #define SBA_OPTSSZ        4
 #define SBA_INFOSZ        10
+#define SBA_ERROR         -1
 #define SBA_INIT_MU       1E-03
 #define SBA_STOP_THRESH   1E-12
 #define SBA_CG_NOPREC     0
 #define SBA_CG_JACOBI     1
 #define SBA_CG_SSOR       2
-#define SBA_VERSION       "1.3 (Jun. 2006)"
+#define SBA_VERSION       "1.4 (Jan. 2008)"
 
 
 /* Sparse matrix representation using Compressed Row Storage (CRS) format.

@@ -31,21 +31,21 @@
 #define FABS(x)           (((x)>=0)? (x) : -(x))
 
 struct wrap_motstr_data_ {
-  void (*proj)(int j, int i, double *aj, double *bi, double *xij, void *adata); // Q
+  void   (*proj)(int j, int i, double *aj, double *bi, double *xij, void *adata); // Q
   void (*projac)(int j, int i, double *aj, double *bi, double *Aij, double *Bij, void *adata); // dQ/da, dQ/db
   int cnp, pnp, mnp; /* parameter numbers */
   void *adata;
 };
 
 struct wrap_mot_data_ {
-  void (*proj)(int j, int i, double *aj, double *xij, void *adata); // Q
+  void   (*proj)(int j, int i, double *aj, double *xij, void *adata); // Q
   void (*projac)(int j, int i, double *aj, double *Aij, void *adata); // dQ/da
   int cnp, mnp; /* parameter numbers */
   void *adata;
 };
 
 struct wrap_str_data_ {
-  void (*proj)(int j, int i, double *bi, double *xij, void *adata); // Q
+  void   (*proj)(int j, int i, double *bi, double *xij, void *adata); // Q
   void (*projac)(int j, int i, double *bi, double *Bij, void *adata); // dQ/db
   int pnp, mnp; /* parameter numbers */
   void *adata;
@@ -105,7 +105,7 @@ static void sba_motstr_Qs(double *p, struct sba_crsm *idxij, int *rcidxs, int *r
 
 /* Given a parameter vector p made up of the 3D coordinates of n points and the parameters of m cameras, compute in
  * jac the jacobian of the predicted measurements, i.e. the jacobian of the projections of 3D points in the m images.
- * The jacobian is returned in the order (A_11, ..., A_1m, ..., A_n1, ..., A_nm, B_11, ..., B_1m, ..., B_n1, ..., B_nm),
+ * The jacobian is returned in the order (A_11, B_11, ..., A_1m, B_1m, ..., A_n1, B_n1, ..., A_nm, B_nm),
  * where A_ij=dx_ij/db_j and B_ij=dx_ij/db_i (see HZ).
  * Caller supplies rcidxs and rcsubs which can be used as working memory.
  * Notice that depending on idxij, some of the A_ij, B_ij might be missing
@@ -115,8 +115,8 @@ static void sba_motstr_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, in
 {
   register int i, j;
   int cnp, pnp, mnp;
-  double *pa, *pb, *paj, *pbi, *jaca, *jacb, *pAij, *pBij;
-  int n, m, nnz, Asz, Bsz, idx;
+  double *pa, *pb, *paj, *pbi, *pAij, *pBij;
+  int n, m, nnz, Asz, Bsz, ABsz, idx;
   struct wrap_motstr_data_ *wdata;
   void (*projac)(int j, int i, double *aj, double *bi, double *Aij, double *Bij, void *projac_adata);
   void *projac_adata;
@@ -129,8 +129,7 @@ static void sba_motstr_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, in
 
   n=idxij->nr; m=idxij->nc;
   pa=p; pb=p+m*cnp;
-  Asz=mnp*cnp; Bsz=mnp*pnp;
-  jaca=jac; jacb=jac+idxij->nnz*Asz;
+  Asz=mnp*cnp; Bsz=mnp*pnp; ABsz=Asz+Bsz;
 
   for(j=0; j<m; ++j){
     /* j-th camera parameters */
@@ -141,8 +140,8 @@ static void sba_motstr_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, in
     for(i=0; i<nnz; ++i){
       pbi=pb + rcsubs[i]*pnp;
       idx=idxij->val[rcidxs[i]];
-      pAij=jaca + idx*Asz; // set pAij to point to A_ij
-      pBij=jacb + idx*Bsz; // set pBij to point to B_ij
+      pAij=jac  + idx*ABsz; // set pAij to point to A_ij
+      pBij=pAij + Asz; // set pBij to point to B_ij
 
       (*projac)(j, rcsubs[i], paj, pbi, pAij, pBij, projac_adata); // evaluate dQ/da, dQ/db in pAij, pBij
     }
@@ -152,7 +151,7 @@ static void sba_motstr_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, in
 /* Given a parameter vector p made up of the 3D coordinates of n points and the parameters of m cameras, compute in
  * jac the jacobian of the predicted measurements, i.e. the jacobian of the projections of 3D points in the m images.
  * The jacobian is approximated with the aid of finite differences and is returned in the order
- * (A_11, ..., A_1m, ..., A_n1, ..., A_nm, B_11, ..., B_1m, ..., B_n1, ..., B_nm),
+ * (A_11, B_11, ..., A_1m, B_1m, ..., A_n1, B_n1, ..., A_nm, B_nm),
  * where A_ij=dx_ij/da_j and B_ij=dx_ij/db_i (see HZ).
  * Notice that depending on idxij, some of the A_ij, B_ij might be missing
  *
@@ -170,9 +169,9 @@ static void sba_motstr_Qs_fdjac(
     void   *dat)              /* I: points to a "wrap_motstr_data_" structure */
 {
   register int i, j, ii, jj;
-  double *pa, *pb, *paj, *pbi, *jaca, *jacb;
+  double *pa, *pb, *paj, *pbi;
   register double *pAB;
-  int n, m, nnz, Asz, Bsz;
+  int n, m, nnz, Asz, Bsz, ABsz;
 
   double tmp;
   register double d, d1;
@@ -191,8 +190,7 @@ static void sba_motstr_Qs_fdjac(
 
   n=idxij->nr; m=idxij->nc;
   pa=p; pb=p+m*cnp;
-  Asz=mnp*cnp; Bsz=mnp*pnp;
-  jaca=jac; jacb=jac+idxij->nnz*Asz;
+  Asz=mnp*cnp; Bsz=mnp*pnp; ABsz=Asz+Bsz;
 
   /* allocate memory for hxij, hxxij */
   if((hxij=malloc(2*mnp*sizeof(double)))==NULL){
@@ -201,7 +199,6 @@ static void sba_motstr_Qs_fdjac(
   }
   hxxij=hxij+mnp;
 
-  if(cnp){ // is motion varying?
     /* compute A_ij */
     for(j=0; j<m; ++j){
       paj=pa+j*cnp; // j-th camera parameters
@@ -223,15 +220,13 @@ static void sba_motstr_Qs_fdjac(
           (*proj)(j, rcsubs[i], paj, pbi, hxxij, adata);
           paj[jj]=tmp; /* restore */
 
-          pAB=jaca + idxij->val[rcidxs[i]]*Asz; // set pAB to point to A_ij
+          pAB=jac + idxij->val[rcidxs[i]]*ABsz; // set pAB to point to A_ij
           for(ii=0; ii<mnp; ++ii)
             pAB[ii*cnp+jj]=(hxxij[ii]-hxij[ii])*d1;
         }
       }
     }
-  }
 
-  if(pnp){ // is structure varying?
     /* compute B_ij */
     for(i=0; i<n; ++i){
       pbi=pb+i*pnp; // i-th point parameters
@@ -253,13 +248,12 @@ static void sba_motstr_Qs_fdjac(
           (*proj)(rcsubs[j], i, paj, pbi, hxxij, adata);
           pbi[jj]=tmp; /* restore */
 
-          pAB=jacb + idxij->val[rcidxs[j]]*Bsz; // set pAB to point to B_ij
+          pAB=jac + idxij->val[rcidxs[j]]*ABsz + Asz; // set pAB to point to B_ij
           for(ii=0; ii<mnp; ++ii)
             pAB[ii*pnp+jj]=(hxxij[ii]-hxij[ii])*d1;
         }
       }
     }
-  }
 
   free(hxij);
 }
@@ -319,7 +313,7 @@ static void sba_mot_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, int *
 {
   register int i, j;
   int cnp, mnp;
-  double *paj, *jaca, *pAij;
+  double *paj, *pAij;
   //int n;
   int m, nnz, Asz, idx;
   struct wrap_mot_data_ *wdata;
@@ -334,7 +328,6 @@ static void sba_mot_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, int *
   //n=idxij->nr;
   m=idxij->nc;
   Asz=mnp*cnp;
-  jaca=jac;
 
   for(j=0; j<m; ++j){
     /* j-th camera parameters */
@@ -344,7 +337,7 @@ static void sba_mot_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, int *
 
     for(i=0; i<nnz; ++i){
       idx=idxij->val[rcidxs[i]];
-      pAij=jaca + idx*Asz; // set pAij to point to A_ij
+      pAij=jac + idx*Asz; // set pAij to point to A_ij
 
       (*projac)(j, rcsubs[i], paj, pAij, projac_adata); // evaluate dQ/da in pAij
     }
@@ -371,7 +364,7 @@ static void sba_mot_Qs_fdjac(
     void   *dat)              /* I: points to a "wrap_mot_data_" structure */
 {
   register int i, j, ii, jj;
-  double *paj, *jaca;
+  double *paj;
   register double *pA;
   //int n; 
   int m, nnz, Asz;
@@ -394,7 +387,6 @@ static void sba_mot_Qs_fdjac(
   //n=idxij->nr;
   m=idxij->nc;
   Asz=mnp*cnp;
-  jaca=jac;
 
   /* allocate memory for hxij, hxxij */
   if((hxij=malloc(2*mnp*sizeof(double)))==NULL){
@@ -423,7 +415,7 @@ static void sba_mot_Qs_fdjac(
         (*proj)(j, rcsubs[i], paj, hxxij, adata);
         paj[jj]=tmp; /* restore */
 
-        pA=jaca + idxij->val[rcidxs[i]]*Asz; // set pA to point to A_ij
+        pA=jac + idxij->val[rcidxs[i]]*Asz; // set pA to point to A_ij
         for(ii=0; ii<mnp; ++ii)
           pA[ii*cnp+jj]=(hxxij[ii]-hxij[ii])*d1;
       }
@@ -600,6 +592,8 @@ static void sba_str_Qs_fdjac(
 
 /* 
  * Simple driver to sba_motstr_levmar_x for bundle adjustment on camera and structure parameters.
+ *
+ * Returns the number of iterations (>=0) if successfull, SBA_ERROR if failed
  */
 
 int sba_motstr_levmar(
@@ -683,7 +677,7 @@ static void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs,
 
     /* count visible image points */
     for(i=nvis=0; i<n*m; ++i)
-      nvis+=vmask[i];
+      nvis+=(vmask[i]!=0);
 
     /* each "func" & "fjac" evaluation requires nvis "proj" & "projac" evaluations */
     info[7]*=nvis;
@@ -696,6 +690,8 @@ static void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs,
 
 /* 
  * Simple driver to sba_mot_levmar_x for bundle adjustment on camera parameters.
+ *
+ * Returns the number of iterations (>=0) if successfull, SBA_ERROR if failed
  */
 
 int sba_mot_levmar(
@@ -773,7 +769,7 @@ void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double
 
     /* count visible image points */
     for(i=nvis=0; i<n*m; ++i)
-      nvis+=vmask[i];
+      nvis+=(vmask[i]!=0);
 
     /* each "func" & "fjac" evaluation requires nvis "proj" & "projac" evaluations */
     info[7]*=nvis;
@@ -785,6 +781,8 @@ void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double
 
 /* 
  * Simple driver to sba_str_levmar_x for bundle adjustment on structure parameters.
+ *
+ * Returns the number of iterations (>=0) if successfull, SBA_ERROR if failed
  */
 
 int sba_str_levmar(
@@ -860,7 +858,7 @@ static void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs,
 
     /* count visible image points */
     for(i=nvis=0; i<n*m; ++i)
-      nvis+=vmask[i];
+      nvis+=(vmask[i]!=0);
 
     /* each "func" & "fjac" evaluation requires nvis "proj" & "projac" evaluations */
     info[7]*=nvis;
