@@ -25,7 +25,7 @@ IF(BUILD_DEMO)
   # f2c is sometimes equivalent to libF77 & libI77
   #SET(F2C_LIB_NAME "libF77;libI77" CACHE STRING "The name of the f2c or F77/I77 library")
 
-  SET(LIBS sba ${LAPACKBLAS_LIB_NAMES} ${F2C_LIB_NAME})
+  SET(LIBS sba ${LAPACKBLAS_LIB_NAMES} ${F2C_LIB_NAME} m)
 
   LINK_DIRECTORIES(${LAPACKBLAS_DIR})
 
