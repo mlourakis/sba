@@ -63,7 +63,7 @@ void *ptr;
  *     all A_ij, B_ij and that row i of jac corresponds to the gradient of the i-th
  *     component of func, evaluated at p.
  * p is an input array of length nvars containing the point of evaluation.
- * idxij, rcidxs, rcsubs, mcon, cnp, pnp, mnp are as usual. Note that if cnp=0 or
+ * idxij, rcidxs, rcsubs, ncon, mcon, cnp, pnp, mnp are as usual. Note that if cnp=0 or
  *     pnp=0 a jacobian corresponding resp. to motion or camera parameters
  *     only is assumed.
  * func_adata, jac_adata point to possible additional data and are passed
@@ -91,7 +91,7 @@ void *ptr;
 void sba_motstr_chkjac_x(
     void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
     void (*jacf)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
-    double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int mcon, int cnp, int pnp, int mnp, void *func_adata, void *jac_adata)
+    double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int ncon, int mcon, int cnp, int pnp, int mnp, void *func_adata, void *jac_adata)
 {
 const double factor=100.0, one=1.0, zero=0.0;
 double *fvec, *fjac, *pp, *fvecp, *buf, *err;
@@ -148,11 +148,9 @@ int fvec_sz, pp_sz, fvecp_sz, numerr=0;
   for(i=0; i<n; ++i){
     nnz=sba_crsm_row_elmidxs(idxij, i, rcidxs, rcsubs); /* find nonzero A_ij, B_ij, j=0...m-1, actual column numbers in rcsubs */
     for(j=0; j<nnz; ++j){
-      if(rcsubs[j]<mcon) continue; // A_ij, B_ij are zero
- 
       ptr2=err + idxij->val[rcidxs[j]]*mnp; // set ptr2 to point into err
 
-      if(cnp){
+      if(cnp && rcsubs[j]>=mcon){ // A_ij is nonzero
         ptr1=fjac + idxij->val[rcidxs[j]]*ABsz; // set ptr1 to point to A_ij
         pab=pa + rcsubs[j]*cnp;
         for(jj=0; jj<cnp; ++jj){
@@ -164,7 +162,7 @@ int fvec_sz, pp_sz, fvecp_sz, numerr=0;
         }
       }
 
-      if(pnp){
+      if(pnp && i>=ncon){ // B_ij is nonzero
         ptr1=fjac + idxij->val[rcidxs[j]]*ABsz + Asz; // set ptr1 to point to B_ij
         pab=pb + i*pnp;
         for(jj=0; jj<pnp; ++jj){
@@ -194,7 +192,7 @@ int fvec_sz, pp_sz, fvecp_sz, numerr=0;
   for(i=0; i<n; ++i){
     nnz=sba_crsm_row_elmidxs(idxij, i, rcidxs, rcsubs); /* find nonzero err_ij, j=0...m-1 */
     for(j=0; j<nnz; ++j){
-      if(rcsubs[j]<mcon) continue; // corresponding gradients are taken to be zero
+      if(i<ncon && rcsubs[j]<mcon) continue; // corresponding gradients are taken to be zero
 
       ptr1=err + idxij->val[rcidxs[j]]*mnp; // set ptr1 to point into err
       for(ii=0; ii<mnp; ++ii)
@@ -217,15 +215,15 @@ void sba_mot_chkjac_x(
     void (*jacf)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
     double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int mcon, int cnp, int mnp, void *func_adata, void *jac_adata)
 {
-  sba_motstr_chkjac_x(func, jacf, p, idxij, rcidxs, rcsubs, mcon, cnp, 0, mnp, func_adata, jac_adata);
+  sba_motstr_chkjac_x(func, jacf, p, idxij, rcidxs, rcsubs, 0, mcon, cnp, 0, mnp, func_adata, jac_adata);
 }
 
 void sba_str_chkjac_x(
     void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
     void (*jacf)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
-    double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int pnp, int mnp, void *func_adata, void *jac_adata)
+    double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int ncon, int pnp, int mnp, void *func_adata, void *jac_adata)
 {
-  sba_motstr_chkjac_x(func, jacf, p, idxij, rcidxs, rcsubs, 0, 0, pnp, mnp, func_adata, jac_adata);
+  sba_motstr_chkjac_x(func, jacf, p, idxij, rcidxs, rcsubs, ncon, 0, 0, pnp, mnp, func_adata, jac_adata);
 }
 
 #if 0
@@ -237,7 +235,7 @@ void sba_str_chkjac_x(
 /*****************************************************************************************/
 // Sample code for using sba_motstr_chkjac():
 
-  for(i=0; i<n; ++i)
+  for(i=ncon; i<n; ++i)
     for(j=mcon; j<m; ++j){
       if(!vmask[i*m+j]) continue; // point i does not appear in image j
 

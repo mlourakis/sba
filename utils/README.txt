@@ -4,8 +4,11 @@ This directory contains utilities related to sba.
 ==================== FILES ====================
 hess2eps.c: C source of a function for visualizing the sparseness pattern
             of JtJ in EPS format.
-reprerr.pl: Perl script for computing the reprojection error corresponding to a 3D
-            reconstruction. The format of datafiles is that explained in ../demo/README.txt
+SBAio.pm:   Perl module with functions for loading a 3D reconstruction.
+            The format of datafiles is that explained in ../demo/README.txt
+reprerr.pl: Perl script for computing the reprojection error corresponding
+            to a 3D reconstruction
+quats.pl:   Perl utility functions for quaternions
 
 ==================== SAMPLE RUNS ====================
 Consult http://www.ics.forth.gr/~lourakis/sba/bt_pattern.pdf

@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <math.h>
+
 #include "readparams.h"
 
 
@@ -158,7 +160,7 @@ double dummy;
  */
 static void readCameraParams(FILE *fp, int cnp,
                              void (*infilter)(double *pin, int nin, double *pout, int nout), int filecnp,
-                             double *params)
+                             double *params, double *initrot)
 {
 int lineno, n, ch;
 double *tofilter;
@@ -208,9 +210,16 @@ double *tofilter;
       exit(1);
     }
 
+    /* save rotation assuming the last 3 parameters correspond to translation */
+    initrot[1]=params[cnp-6];
+    initrot[2]=params[cnp-5];
+    initrot[3]=params[cnp-4];
+    initrot[0]=sqrt(1.0 - initrot[1]*initrot[1] - initrot[2]*initrot[2] - initrot[3]*initrot[3]);
+
     params+=cnp;
+    initrot+=FULLQUATSZ;
   }
-  free(tofilter);
+  if(tofilter) free(tofilter);
 }
 
 
@@ -388,7 +397,7 @@ register int i, ii, jj, k;
 void readInitialSBAEstimate(char *camsfname, char *ptsfname, int cnp, int pnp, int mnp,
                             void (*infilter)(double *pin, int nin, double *pout, int nout), int filecnp,
                             int *ncams, int *n3Dpts, int *n2Dprojs,
-                            double **motstruct, double **imgpts, double **covimgpts, char **vmask)
+                            double **motstruct, double **initrot, double **imgpts, double **covimgpts, char **vmask)
 {
 FILE *fpc, *fpp;
 int havecov;
@@ -409,6 +418,11 @@ int havecov;
   *motstruct=(double *)malloc((*ncams*cnp + *n3Dpts*pnp)*sizeof(double));
   if(*motstruct==NULL){
     fprintf(stderr, "memory allocation for 'motstruct' failed in readInitialSBAEstimate()\n");
+    exit(1);
+  }
+  *initrot=(double *)malloc((*ncams*FULLQUATSZ)*sizeof(double)); // Note: this assumes quaternions for rotations!
+  if(*initrot==NULL){
+    fprintf(stderr, "memory allocation for 'initrot' failed in readInitialSBAEstimate()\n");
     exit(1);
   }
   *imgpts=(double *)malloc(*n2Dprojs*mnp*sizeof(double));
@@ -437,7 +451,7 @@ int havecov;
   rewind(fpc);
   rewind(fpp);
 
-  readCameraParams(fpc, cnp, infilter, filecnp, *motstruct);
+  readCameraParams(fpc, cnp, infilter, filecnp, *motstruct, *initrot);
   readPointParamsAndProjections(fpp, *motstruct+*ncams*cnp, pnp, *imgpts, *covimgpts, havecov, mnp, *vmask, *ncams);
 
   fclose(fpc);
@@ -473,6 +487,23 @@ void readCalibParams(char *fname, double ical[9])
   fclose(fp);
 }
 
+/* reads the number of (double) parameters contained in the first non-comment row of a file */
+int readNumParams(char *fname)
+{
+FILE *fp;
+int n;
+
+  if((fp=fopen(fname, "r"))==NULL){
+    fprintf(stderr, "error opening file %s!\n", fname);
+    exit(1);
+  }
+
+  n=countNDoubles(fp);
+  fclose(fp);
+
+  return n;
+}
+
 /* routines for printing the motion and structure parameters, plus the projections
  * of 3D points across images. Mainly for debugging purposes.
  *
@@ -482,16 +513,16 @@ void readCalibParams(char *fname, double ical[9])
  */
 
 /* motion parameters only */
-void printSBAMotionData(double *motstruct, int ncams, int cnp,
+void printSBAMotionData(FILE *fp, double *motstruct, int ncams, int cnp,
                         void (*outfilter)(double *pin, int nin, double *pout, int nout), int outcnp)
 {
 register int i;
 
-  printf("Motion parameters:\n");
+  fputs("Motion parameters:\n", fp);
   if(!outfilter || outcnp<=0){ // no output filtering
     for(i=0; i<ncams*cnp; ++i){
-      printf("%lf ", motstruct[i]);
-      if((i+1)%cnp==0) putchar('\n');
+      fprintf(fp, "%.10e ", motstruct[i]);
+      if((i+1)%cnp==0) fputc('\n', fp);
     }
   }
   else{
@@ -505,74 +536,114 @@ register int i;
     for(i=0; i<ncams*cnp; i+=cnp){
       (*outfilter)(motstruct+i, cnp, filtered, outcnp);
       for(j=0; j<outcnp; ++j)
-        printf("%lf ", filtered[j]);
-      putchar('\n');
+        fprintf(fp, "%.10e ", filtered[j]);
+      fputc('\n', fp);
     }
     free(filtered);
   }
 }
 
 /* structure parameters only */
-void printSBAStructureData(double *motstruct, int ncams, int n3Dpts, int cnp, int pnp)
+void printSBAStructureData(FILE *fp, double *motstruct, int ncams, int n3Dpts, int cnp, int pnp)
 {
 register int i;
 
   motstruct+=ncams*cnp;
-  printf("\n\nStructure parameters:\n");
+  fputs("\n\nStructure parameters:\n", fp);
   for(i=0; i<n3Dpts*pnp; ++i){
-    printf("%lf ", motstruct[i]);
-    if((i+1)%pnp==0) putchar('\n');
+    fprintf(fp, "%.10e ", motstruct[i]);
+    if((i+1)%pnp==0) fputc('\n', fp);
   }
 }
 
 /* prints the estimates of the motion + structure parameters. It also prints the projections
  * of 3D points across images.
  */
-void printSBAData(double *motstruct, int cnp, int pnp, int mnp, 
+void printSBAData(FILE *fp, double *motstruct, int cnp, int pnp, int mnp, 
                   void (*outfilter)(double *pin, int nin, double *pout, int nout), int outcnp,
                   int ncams, int n3Dpts, double *imgpts, int n2Dprojs, char *vmask)
 {
 register int i, j, k, l;
 int nframes;
 
-  printSBAMotionData(motstruct, ncams, cnp, outfilter, outcnp);
+  printSBAMotionData(fp, motstruct, ncams, cnp, outfilter, outcnp);
   motstruct+=ncams*cnp;
 
-  printf("\n\nStructure parameters and image projections:\n");
+  fputs("\n\nStructure parameters and image projections:\n", fp);
   for(i=k=0; i<n3Dpts; ++i){
     for(j=0; j<pnp; ++j)
-      printf("%lf ", motstruct[i*pnp+j]);
+      fprintf(fp, "%.10e ", motstruct[i*pnp+j]);
     
     for(j=nframes=0; j<ncams; ++j)
       if(vmask[i*ncams+j]) ++nframes;
-    printf("%d", nframes);
+    fprintf(fp, "%d", nframes);
     for(j=0; j<ncams; ++j)
       if(vmask[i*ncams+j]){
-        printf(" %d", j);
+        fprintf(fp, " %d", j);
         for(l=0; l<mnp; ++l, ++k)
-          printf(" %lf", imgpts[k]);
+          fprintf(fp, " %.6e", imgpts[k]);
       }
-    putchar('\n');
+    fputc('\n', fp);
   }
 
 #if 0
   /* alternative output format */
-  printf("\n\nStructure parameters:\n");
+  fputs("\n\nStructure parameters:\n", fp);
   for(i=0; i<n3Dpts*pnp; ++i){
-    printf("%lf ", motstruct[i]);
-    if((i+1)%pnp==0) putchar('\n');
+    fprintf(fp, "%.10e ", motstruct[i]);
+    if((i+1)%pnp==0) fputc('\n', fp);
   }
 
-  printf("\n\nImage projections:\n");
+  fputs("\n\nImage projections:\n", fp);
   for(i=0; i<n2Dprojs*mnp; ++i){
-    printf("%lf ", imgpts[i]);
+    fprintf(fp, "%.6e ", imgpts[i]);
   }
 
-  printf("\n\nVisibility mask\n");
+  fputs("\n\nVisibility mask\n", fp);
   for(i=0; i<ncams*n3Dpts; ++i)
-    printf("%d%s", (int)vmask[i], ((i+1)%ncams)? " " : "\n");
-  putchar('\n');
+    fprintf(fp, "%d%s", (int)vmask[i], ((i+1)%ncams)? " " : "\n");
+  fputc('\n', fp);
 #endif
 
-  fflush(stdout);
+  fflush(fp);
+}
+
+
+/* save *Euclidean* sba structure to a PLY file for interactive viewing with scanalyze
+ * see ftp://graphics.stanford.edu/pub/zippack/ply-1.1.tar.Z and
+ * http://www-graphics.stanford.edu/software/scanalyze/
+ */
+void saveSBAStructureDataAsPLY(char *fname, double *motstruct, int ncams, int n3Dpts, int cnp, int pnp, int withrgb)
+{
+register int i;
+FILE *fp;
+
+  if(pnp!=3){
+    fprintf(stderr, "saveSBAStructureDataAsPLY: .ply file output is only meaningful for 3-dimensional points (got %dD)\n", pnp);
+    exit(1);
+  }
+
+  if((fp=fopen(fname, "w"))==NULL){
+    fprintf(stderr, "saveSBAStructureDataAsPLY: error opening file %s for writing\n", fname);
+    exit(1);
+  }
+
+  fprintf(fp, "ply\nformat ascii 1.0\n");
+  fprintf(fp, "element vertex %d\n", n3Dpts);
+  fprintf(fp, "property float x\nproperty float y\nproperty float z\n");
+  if(withrgb)
+    fprintf(fp, "property uchar diffuse_red\nproperty uchar diffuse_green\nproperty uchar diffuse_blue\n");
+  fprintf(fp, "comment format of each line is xyz RGB\n");
+  fprintf(fp, "end_header\n");
+
+  motstruct+=ncams*cnp;
+  for(i=0; i<n3Dpts; ++i){
+    if(withrgb)
+      fprintf(fp, "%.6f %.6f %.6f 0 0 0\n", motstruct[i], motstruct[i+1], motstruct[i+2]);
+    else
+      fprintf(fp, "%.6f %.6f %.6f\n", motstruct[i], motstruct[i+1], motstruct[i+2]);
+    motstruct+=pnp;
+  }
+
+  fclose(fp);
 }

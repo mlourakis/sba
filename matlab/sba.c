@@ -1,7 +1,7 @@
 /* ////////////////////////////////////////////////////////////////////////////////
 // 
 //  Matlab MEX file for sba's simple drivers
-//  Copyright (C) 2007-2008 Manolis Lourakis (lourakis at ics forth gr)
+//  Copyright (C) 2007-2009 Manolis Lourakis (lourakis at ics forth gr)
 //  Institute of Computer Science, Foundation for Research & Technology - Hellas
 //  Heraklion, Crete, Greece.
 //
@@ -37,7 +37,7 @@
 #define _MAX_(A, B)     ((A)>=(B)? (A) : (B))
 #define _MIN_(A, B)     ((A)<=(B)? (A) : (B))
 
-#define MININARGS      12
+#define MININARGS      13
 #define MINOUTARGS     2
 
 #define BA_MOTSTRUCT            0
@@ -50,7 +50,7 @@
 #define MAXNAMELEN              256
 
 
-#ifdef WIN32
+#ifdef _WIN32 /* windows platform */
 #include <windows.h>
 
 #define LOADFUNCTION GetProcAddress
@@ -58,7 +58,12 @@
 
 typedef HINSTANCE LibHandle;
 
-#else /* !WIN32, assume Un*x */
+#else /* !_WIN32, assume Un*x */
+
+#ifndef __unix__
+#warning This is not a Windows platform and symbol __unix__ is not defined; continuing compilation assuming a Un*x system
+#endif /* __unix__ */
+
 #include <dlfcn.h>
 
 #define LOADFUNCTION dlsym
@@ -66,7 +71,7 @@ typedef HINSTANCE LibHandle;
 
 typedef void *LibHandle;
 
-#endif /* WIN32 */
+#endif /* _WIN32 */
 
 struct mexdata {
   /* matlab or dynlib names of the fitting function & its Jacobian */
@@ -80,7 +85,7 @@ struct mexdata {
    * If present, problem-specific data are passed in rhs[2], rhs[3], ... 
    */
   mxArray **rhs;
-  int nrhs; /* >= 2 */
+  int nrhs; /* >= 4 */
 
   /* dynamic libraries stuff */
   LibHandle projlibhandle, projaclibhandle; /* handles */
@@ -258,11 +263,15 @@ register int k;
 struct mexdata *dat=(struct mexdata *)adata;
 
   /* prepare to call matlab */
-  mp=mxGetPr(dat->rhs[0]);
+  mp=mxGetPr(dat->rhs[0]); *mp=j;
+
+  mp=mxGetPr(dat->rhs[1]); *mp=i;
+
+  mp=mxGetPr(dat->rhs[2]);
   for(k=0; k<dat->cnp; ++k)
     mp[k]=aj[k];
 
-  mp=mxGetPr(dat->rhs[1]);
+  mp=mxGetPr(dat->rhs[3]);
   for(k=0; k<dat->pnp; ++k)
     mp[k]=bi[k];
 
@@ -286,11 +295,15 @@ register int k;
 struct mexdata *dat=(struct mexdata *)adata;
 
   /* prepare to call matlab */
-  mp=mxGetPr(dat->rhs[0]);
+  mp=mxGetPr(dat->rhs[0]); *mp=j;
+
+  mp=mxGetPr(dat->rhs[1]); *mp=i;
+
+  mp=mxGetPr(dat->rhs[2]);
   for(k=0; k<dat->cnp; ++k)
     mp[k]=aj[k];
 
-  mp=mxGetPr(dat->rhs[1]);
+  mp=mxGetPr(dat->rhs[3]);
   for(k=0; k<dat->pnp; ++k)
     mp[k]=bi[k];
 
@@ -329,11 +342,15 @@ register int k;
 struct mexdata *dat=(struct mexdata *)adata;
 
   /* prepare to call matlab */
-  mp=mxGetPr(dat->rhs[0]);
+  mp=mxGetPr(dat->rhs[0]); *mp=j;
+
+  mp=mxGetPr(dat->rhs[1]); *mp=i;
+
+  mp=mxGetPr(dat->rhs[2]);
   for(k=0; k<dat->cnp; ++k)
     mp[k]=aj[k];
 
-  mp=mxGetPr(dat->rhs[1]);
+  mp=mxGetPr(dat->rhs[3]);
   bi=dat->pb + i*dat->pnp;
   for(k=0; k<dat->pnp; ++k)
     mp[k]=bi[k];
@@ -359,11 +376,15 @@ register int k;
 struct mexdata *dat=(struct mexdata *)adata;
 
   /* prepare to call matlab */
-  mp=mxGetPr(dat->rhs[0]);
+  mp=mxGetPr(dat->rhs[0]); *mp=j;
+
+  mp=mxGetPr(dat->rhs[1]); *mp=i;
+
+  mp=mxGetPr(dat->rhs[2]);
   for(k=0; k<dat->cnp; ++k)
     mp[k]=aj[k];
 
-  mp=mxGetPr(dat->rhs[1]);
+  mp=mxGetPr(dat->rhs[3]);
   bi=dat->pb + i*dat->pnp;
   for(k=0; k<dat->pnp; ++k)
     mp[k]=bi[k];
@@ -394,12 +415,16 @@ register int k;
 struct mexdata *dat=(struct mexdata *)adata;
 
   /* prepare to call matlab */
-  mp=mxGetPr(dat->rhs[0]);
+  mp=mxGetPr(dat->rhs[0]); *mp=j;
+
+  mp=mxGetPr(dat->rhs[1]); *mp=i;
+
+  mp=mxGetPr(dat->rhs[2]);
   aj=dat->pa + j*dat->cnp;
   for(k=0; k<dat->cnp; ++k)
     mp[k]=aj[k];
 
-  mp=mxGetPr(dat->rhs[1]);
+  mp=mxGetPr(dat->rhs[3]);
   for(k=0; k<dat->pnp; ++k)
     mp[k]=bi[k];
 
@@ -424,12 +449,16 @@ register int k;
 struct mexdata *dat=(struct mexdata *)adata;
 
   /* prepare to call matlab */
-  mp=mxGetPr(dat->rhs[0]);
+  mp=mxGetPr(dat->rhs[0]); *mp=j;
+
+  mp=mxGetPr(dat->rhs[1]); *mp=i;
+
+  mp=mxGetPr(dat->rhs[2]);
   aj=dat->pa + j*dat->cnp;
   for(k=0; k<dat->cnp; ++k)
     mp[k]=aj[k];
 
-  mp=mxGetPr(dat->rhs[1]);
+  mp=mxGetPr(dat->rhs[3]);
   for(k=0; k<dat->pnp; ++k)
     mp[k]=bi[k];
 
@@ -451,7 +480,7 @@ struct mexdata *dat=(struct mexdata *)adata;
 }
 
 /* check the supplied matlab projection function and its Jacobian. Returns 1 on error, 0 otherwise */
-static int checkFuncAndJacobianMATLAB(double *aj, double *bi, int chkproj, int chkjac, int mintype, struct mexdata *dat)
+static int checkFuncAndJacobianMATLAB(int j, int i, double *aj, double *bi, int chkproj, int chkjac, int mintype, struct mexdata *dat)
 {
 mxArray *lhs[2]={NULL, NULL};
 register int k;
@@ -460,11 +489,15 @@ double *mp;
 
   mexSetTrapFlag(1); /* handle errors in the MEX-file */
 
-  mp=mxGetPr(dat->rhs[0]);
+  mp=mxGetPr(dat->rhs[0]); *mp=j;
+
+  mp=mxGetPr(dat->rhs[1]); *mp=i;
+
+  mp=mxGetPr(dat->rhs[2]);
   for(k=0; k<dat->cnp; ++k)
     mp[k]=aj[k];
 
-  mp=mxGetPr(dat->rhs[1]);
+  mp=mxGetPr(dat->rhs[3]);
   for(k=0; k<dat->pnp; ++k)
     mp[k]=bi[k];
 
@@ -547,7 +580,7 @@ double *mp;
 static void proj_motstrDL(int j, int i, double *aj, double *bi, double *xij, void *adata)
 {
 struct mexdata *dat=(struct mexdata *)adata;
-typedef void (*projMS)(double *aj, double *bi, double *xij, double **adata);
+typedef void (*projMS)(int j, int i, double *aj, double *bi, double *xij, double **adata);
 projMS proj;
 
   /* get pointer to function... */
@@ -556,13 +589,13 @@ projMS proj;
     matlabFmtdErrMsgTxt("sba: error loading projection function '%s' from dynamic library %s\n", dat->projname, dat->projlibname);
 
   /* ...and call it */
-  (*proj)(aj, bi, xij, dat->dynadata);
+  (*proj)(j, i, aj, bi, xij, dat->dynadata);
 }
 
 static void projac_motstrDL(int j, int i, double *aj, double *bi, double *Aij, double *Bij, void *adata)
 {
 struct mexdata *dat=(struct mexdata *)adata;
-typedef void (*projacMS)(double *aj, double *bi, double *Aij, double *Bij, double **adata);
+typedef void (*projacMS)(int j, int i, double *aj, double *bi, double *Aij, double *Bij, double **adata);
 projacMS projac;
 
   /* get pointer to function... */
@@ -571,14 +604,14 @@ projacMS projac;
     matlabFmtdErrMsgTxt("sba: error loading Jacobian function '%s' from dynamic library %s\n", dat->projacname, dat->projaclibname);
 
   /* ...and call it */
-  (*projac)(aj, bi, Aij, Bij, dat->dynadata);
+  (*projac)(j, i, aj, bi, Aij, Bij, dat->dynadata);
 }
 
 
 static void proj_motDL(int j, int i, double *aj, double *xij, void *adata)
 {
 struct mexdata *dat=(struct mexdata *)adata;
-typedef void (*projM)(double *aj, double *bi, double *xij, double **adata);
+typedef void (*projM)(int j, int i, double *aj, double *bi, double *xij, double **adata);
 projM proj;
 double *bi;
 
@@ -589,13 +622,13 @@ double *bi;
 
   /* ...and call it */
   bi=dat->pb + i*dat->pnp;
-  (*proj)(aj, bi, xij, dat->dynadata);
+  (*proj)(j, i, aj, bi, xij, dat->dynadata);
 }
 
 static void projac_motDL(int j, int i, double *aj, double *Aij, void *adata)
 {
 struct mexdata *dat=(struct mexdata *)adata;
-typedef void (*projacM)(double *aj, double *bi, double *Aij, double **adata);
+typedef void (*projacM)(int j, int i, double *aj, double *bi, double *Aij, double **adata);
 projacM projac;
 double *bi;
 
@@ -606,13 +639,13 @@ double *bi;
 
   /* ...and call it */
   bi=dat->pb + i*dat->pnp;
-  (*projac)(aj, bi, Aij, dat->dynadata);
+  (*projac)(j, i, aj, bi, Aij, dat->dynadata);
 }
 
 static void proj_strDL(int j, int i, double *bi, double *xij, void *adata)
 {
 struct mexdata *dat=(struct mexdata *)adata;
-typedef void (*projS)(double *aj, double *bi, double *xij, double **adata);
+typedef void (*projS)(int j, int i, double *aj, double *bi, double *xij, double **adata);
 projS proj;
 double *aj;
 
@@ -623,13 +656,13 @@ double *aj;
 
   /* ...and call it */
   aj=dat->pa + j*dat->cnp;
-  (*proj)(aj, bi, xij, dat->dynadata);
+  (*proj)(j, i, aj, bi, xij, dat->dynadata);
 }
 
 static void projac_strDL(int j, int i, double *bi, double *Bij, void *adata)
 {
 struct mexdata *dat=(struct mexdata *)adata;
-typedef void (*projacS)(double *aj, double *bi, double *Bij, double **adata);
+typedef void (*projacS)(int j, int i, double *aj, double *bi, double *Bij, double **adata);
 projacS projac;
 double *aj;
 
@@ -640,12 +673,12 @@ double *aj;
 
   /* ...and call it */
   aj=dat->pa + j*dat->cnp;
-  (*projac)(aj, bi, Bij, dat->dynadata);
+  (*projac)(j, i, aj, bi, Bij, dat->dynadata);
 }
 
 /*
  
-[ret, p, info]=sba(n, m, mcon, vmask, p, cnp, pnp, x, covx, mnp, proj, projac, itmax, verbose, opts, reftype, ...);
+[ret, p, info]=sba(n, ncon, m, mcon, vmask, p, cnp, pnp, x, covx, mnp, proj, projac, itmax, verbose, opts, reftype, ...);
 
     Most arguments are straightforward to explain, please refer to the description of their homonymous ones
     in the C version. Below, arguments that have a special meaning in matlab are discussed in more detail.
@@ -656,7 +689,7 @@ double *aj;
 
   * reftype specifies the type of refinement to be carried out and can be one of:
       'motstr' % refinement of motion & structure, default
-      'mot'    % refinement of motion only
+      'mot'    % refinement of motion only (ncon is redundant in this case)
       'str'    % refinement of structure only (mcon is redundant in this case)
     if reftype is omitted, 'motstr is assumed'.
 
@@ -678,7 +711,7 @@ double *aj;
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *Prhs[])
 {
 register int i;
-int n, m, mcon, cnp, pnp, mnp, nvars, nprojs, minnvars;
+int n, ncon, m, mcon, cnp, pnp, mnp, nvars, nprojs, minnvars;
 int status, reftype=BA_MOTSTRUCT, itmax, verbose=0, havejac, havedynproj, havedynprojac;
 int len, nopts, nextra, nreserved, covlen;
 double *p0, *p, *x, *covx=NULL;
@@ -706,43 +739,49 @@ clock_t start_time, end_time;
     mexErrMsgTxt("sba: n must be a scalar.");
   n=(int)mxGetScalar(prhs[0]);
 
-  /** m **/
+  /** ncon **/
   /* the second argument must be a scalar */
   if(!mxIsDouble(prhs[1]) || mxIsComplex(prhs[1]) || mxGetM(prhs[1])!=1 || mxGetN(prhs[1])!=1)
-    mexErrMsgTxt("sba: m must be a scalar.");
-  m=(int)mxGetScalar(prhs[1]);
+    mexErrMsgTxt("sba: ncon must be a scalar.");
+  ncon=(int)mxGetScalar(prhs[1]);
 
-  /** mcon **/
+  /** m **/
   /* the third argument must be a scalar */
   if(!mxIsDouble(prhs[2]) || mxIsComplex(prhs[2]) || mxGetM(prhs[2])!=1 || mxGetN(prhs[2])!=1)
+    mexErrMsgTxt("sba: m must be a scalar.");
+  m=(int)mxGetScalar(prhs[2]);
+
+  /** mcon **/
+  /* the fourth argument must be a scalar */
+  if(!mxIsDouble(prhs[3]) || mxIsComplex(prhs[3]) || mxGetM(prhs[3])!=1 || mxGetN(prhs[3])!=1)
     mexErrMsgTxt("sba: mcon must be a scalar.");
-  mcon=(int)mxGetScalar(prhs[2]);
+  mcon=(int)mxGetScalar(prhs[3]);
 
   /** mask **/
-  /* the fourth argument must be a nxm matrix */
-  if(!mxIsDouble(prhs[3]) || mxIsComplex(prhs[3]) || mxGetM(prhs[3])!=n || mxGetN(prhs[3])!=m)
-    matlabFmtdErrMsgTxt("sba: mask must be a %dx%d matrix (got %dx%d).", n, m, mxGetM(prhs[3]), mxGetN(prhs[3]));
-  if(mxIsSparse(prhs[3])) vmask=getVMaskSparse(prhs[3]);
-  else vmask=getVMaskDense(prhs[3]);
+  /* the fifth argument must be a nxm matrix */
+  if(!mxIsDouble(prhs[4]) || mxIsComplex(prhs[4]) || mxGetM(prhs[4])!=n || mxGetN(prhs[4])!=m)
+    matlabFmtdErrMsgTxt("sba: mask must be a %dx%d matrix (got %dx%d).", n, m, mxGetM(prhs[4]), mxGetN(prhs[4]));
+  if(mxIsSparse(prhs[4])) vmask=getVMaskSparse(prhs[4]);
+  else vmask=getVMaskDense(prhs[4]);
 #ifdef DEBUG
   fflush(stderr);
-  fprintf(stderr, "SBA: %s point visibility mask\n", mxIsSparse(prhs[3])? "sparse" : "dense");
+  fprintf(stderr, "SBA: %s point visibility mask\n", mxIsSparse(prhs[4])? "sparse" : "dense");
 #endif /* DEBUG */
 
   /** p **/
-  /* the fifth argument must be a vector */
-  if(!mxIsDouble(prhs[4]) || mxIsComplex(prhs[4]) || !(mxGetM(prhs[4])==1 || mxGetN(prhs[4])==1))
+  /* the sixth argument must be a vector */
+  if(!mxIsDouble(prhs[5]) || mxIsComplex(prhs[5]) || !(mxGetM(prhs[5])==1 || mxGetN(prhs[5])==1))
     mexErrMsgTxt("sba: p must be a real vector.");
-  p0=mxGetPr(prhs[4]);
+  p0=mxGetPr(prhs[5]);
   /* determine if we have a row or column vector and retrieve its 
    * size, i.e. the number of parameters
    */
-  if(mxGetM(prhs[4])==1){
-    nvars=mxGetN(prhs[4]);
+  if(mxGetM(prhs[5])==1){
+    nvars=mxGetN(prhs[5]);
     mdata.isrow_p0=1;
   }
   else{
-    nvars=mxGetM(prhs[4]);
+    nvars=mxGetM(prhs[5]);
     mdata.isrow_p0=0;
   }
   /* copy input parameter vector to avoid destroying it */
@@ -754,34 +793,34 @@ clock_t start_time, end_time;
   dblcopy_(p, p0, nvars);
 
   /** cnp **/
-  /* the sixth argument must be a scalar */
-  if(!mxIsDouble(prhs[5]) || mxIsComplex(prhs[5]) || mxGetM(prhs[5])!=1 || mxGetN(prhs[5])!=1)
-    mexErrMsgTxt("sba: cnp must be a scalar.");
-  cnp=(int)mxGetScalar(prhs[5]);
-
-  /** pnp **/
   /* the seventh argument must be a scalar */
   if(!mxIsDouble(prhs[6]) || mxIsComplex(prhs[6]) || mxGetM(prhs[6])!=1 || mxGetN(prhs[6])!=1)
+    mexErrMsgTxt("sba: cnp must be a scalar.");
+  cnp=(int)mxGetScalar(prhs[6]);
+
+  /** pnp **/
+  /* the eighth argument must be a scalar */
+  if(!mxIsDouble(prhs[7]) || mxIsComplex(prhs[7]) || mxGetM(prhs[7])!=1 || mxGetN(prhs[7])!=1)
     mexErrMsgTxt("sba: pnp must be a scalar.");
-  pnp=(int)mxGetScalar(prhs[6]);
+  pnp=(int)mxGetScalar(prhs[7]);
 
   /* check that p has the right dimension */
   if(nvars!=m*cnp + n*pnp)
     matlabFmtdErrMsgTxt("sba: p must have %d elements (got %d).", m*cnp + n*pnp, nvars);
 
   /** x **/
-  /* the eighth argument must be a vector */
-  if(!mxIsDouble(prhs[7]) || mxIsComplex(prhs[7]) || !(mxGetM(prhs[7])==1 || mxGetN(prhs[7])==1))
+  /* the ninth argument must be a vector */
+  if(!mxIsDouble(prhs[8]) || mxIsComplex(prhs[8]) || !(mxGetM(prhs[8])==1 || mxGetN(prhs[8])==1))
     mexErrMsgTxt("sba: x must be a real vector.");
-  x=mxGetPr(prhs[7]);
-  nprojs=_MAX_(mxGetM(prhs[7]), mxGetN(prhs[7]));
+  x=mxGetPr(prhs[8]);
+  nprojs=_MAX_(mxGetM(prhs[8]), mxGetN(prhs[8]));
 
   /* covx (optional) */
-  /* check if the ninth argument is a vector */
-  if(mxIsDouble(prhs[8]) && !mxIsComplex(prhs[8]) && (mxGetM(prhs[8])==1 || mxGetN(prhs[8])==1)){
-    covlen=_MAX_(mxGetM(prhs[8]), mxGetN(prhs[8]));
+  /* check if the tenth argument is a vector */
+  if(mxIsDouble(prhs[9]) && !mxIsComplex(prhs[9]) && (mxGetM(prhs[9])==1 || mxGetN(prhs[9])==1)){
+    covlen=_MAX_(mxGetM(prhs[9]), mxGetN(prhs[9]));
     if(covlen>1){ /* make sure that argument is not a scalar */
-      covx=mxGetPr(prhs[8]);
+      covx=mxGetPr(prhs[9]);
 
       ++prhs;
       --nrhs;
@@ -789,10 +828,10 @@ clock_t start_time, end_time;
   }
 
   /** mnp **/
-  /* the ninth required argument must be a scalar */
-  if(!mxIsDouble(prhs[8]) || mxIsComplex(prhs[8]) || mxGetM(prhs[8])!=1 || mxGetN(prhs[8])!=1)
+  /* the tenth required argument must be a scalar */
+  if(!mxIsDouble(prhs[9]) || mxIsComplex(prhs[9]) || mxGetM(prhs[9])!=1 || mxGetN(prhs[9])!=1)
     mexErrMsgTxt("sba: mnp must be a scalar.");
-  mnp=(int)mxGetScalar(prhs[8]);
+  mnp=(int)mxGetScalar(prhs[9]);
   nprojs/=mnp;
 
   /* check that x has the correct dimension, comparing with the elements in vmask */
@@ -806,14 +845,14 @@ clock_t start_time, end_time;
     matlabFmtdErrMsgTxt("sba: covx must be a real vector of size %d (got %d).", len*mnp*mnp, covlen);
 
   /** proj **/ 
-  /* the tenth required argument must be a string , i.e. a char row vector */
-  if(mxIsChar(prhs[9])!=1)
+  /* the eleventh required argument must be a string , i.e. a char row vector */
+  if(mxIsChar(prhs[10])!=1)
     mexErrMsgTxt("sba: proj argument must be a string.");
-  if(mxGetM(prhs[9])!=1)
+  if(mxGetM(prhs[10])!=1)
     mexErrMsgTxt("sba: proj argument must be a string (i.e. char row vector).");
   /* retrieve supplied name */
-  len=mxGetN(prhs[9])+1;
-  status=mxGetString(prhs[9], mdata.projname, _MIN_(len, MAXNAMELEN));
+  len=mxGetN(prhs[10])+1;
+  status=mxGetString(prhs[10], mdata.projname, _MIN_(len, MAXNAMELEN));
   if(status!=0)
     mexErrMsgTxt("sba: not enough space. String is truncated.");
   /* check if we have a name@library pair */
@@ -822,13 +861,13 @@ clock_t start_time, end_time;
     /* copy the library name */
     strcpy(mdata.projlibname, str);
     /* attempt to load the library */
-#ifdef WIN32
+#ifdef _WIN32
     mdata.projlibhandle=LoadLibrary(mdata.projlibname);
     if(!mdata.projlibhandle)
 #else
     mdata.projlibhandle=dlopen(mdata.projlibname, RTLD_LAZY);
     if(!mdata.projlibhandle)
-#endif /* WIN32 */
+#endif /* _WIN32 */
       matlabFmtdErrMsgTxt("sba: error loading dynamic library %s!\n", mdata.projlibname);
     havedynproj=1;
   }
@@ -839,13 +878,13 @@ clock_t start_time, end_time;
 
   /** jac (optional) **/
   havejac=havedynprojac=0;
-  /* check whether eleventh argument is a nonempty string */
-  if(mxIsChar(prhs[10])==1){
-    switch(mxGetM(prhs[10])){
+  /* check whether the twelfth argument is a nonempty string */
+  if(mxIsChar(prhs[11])==1){
+    switch(mxGetM(prhs[11])){
       case 1:
         /* store supplied name */
-        len=mxGetN(prhs[10])+1;
-        status=mxGetString(prhs[10], mdata.projacname, _MIN_(len, MAXNAMELEN));
+        len=mxGetN(prhs[11])+1;
+        status=mxGetString(prhs[11], mdata.projacname, _MIN_(len, MAXNAMELEN));
         if(status!=0)
           mexErrMsgTxt("sba: not enough space. String is truncated.");
         havejac=1;
@@ -857,13 +896,13 @@ clock_t start_time, end_time;
           strcpy(mdata.projaclibname, str);
           if(!havedynproj || strcmp(mdata.projlibname, mdata.projaclibname)){ /* is this a different library from that for the proj. function? */
             /* yes, attempt to load it */
-#         ifdef WIN32
+#         ifdef _WIN32
             mdata.projaclibhandle=LoadLibrary(mdata.projaclibname);
             if(!mdata.projaclibhandle)
 #         else
             mdata.projaclibhandle=dlopen(mdata.projaclibname, RTLD_LAZY);
             if(!mdata.projaclibhandle)
-#         endif /* WIN32 */
+#         endif /* _WIN32 */
               matlabFmtdErrMsgTxt("sba: error loading dynamic library %s!\n", mdata.projaclibname);
           }
           else /* proj. function and Jacobian come from the same library */ 
@@ -882,7 +921,7 @@ clock_t start_time, end_time;
         break;
       default:
         matlabFmtdErrMsgTxt("sba: projac argument must be a string (i.e. row vector); got %dx%d.",
-                                  mxGetM(prhs[10]), mxGetN(prhs[10]));
+                                  mxGetM(prhs[11]), mxGetN(prhs[11]));
     }
   }
 
@@ -892,10 +931,10 @@ clock_t start_time, end_time;
 #endif /* DEBUG */
 
   /** itmax **/
-  /* the eleventh required argument must be a scalar */
-  if(!mxIsDouble(prhs[10]) || mxIsComplex(prhs[10]) || mxGetM(prhs[10])!=1 || mxGetN(prhs[10])!=1)
+  /* the twelfth required argument must be a scalar */
+  if(!mxIsDouble(prhs[11]) || mxIsComplex(prhs[11]) || mxGetM(prhs[11])!=1 || mxGetN(prhs[11])!=1)
     mexErrMsgTxt("sba: itmax must be a scalar.");
-  itmax=(int)mxGetScalar(prhs[10]);
+  itmax=(int)mxGetScalar(prhs[11]);
 
   /* all arguments below this point are optional */
 
@@ -974,14 +1013,16 @@ clock_t start_time, end_time;
    * passing them to matlab/C
    */
   if(!havedynproj || !havedynprojac){ /* at least one of the projection and Jacobian functions are in matlab */
-    nreserved=2;
+    nreserved=4; /* j, i, aj, bi */
     mdata.nrhs=nextra+nreserved;
     mdata.rhs=(mxArray **)mxMalloc(mdata.nrhs*sizeof(mxArray *));
     for(i=0; i<nextra; ++i)
       mdata.rhs[i+nreserved]=(mxArray *)prhs[nrhs-nextra+i]; /* discard 'const' modifier */
 
-    mdata.rhs[0]=mxCreateDoubleMatrix(1, cnp, mxREAL); /* camera parameters */
-    mdata.rhs[1]=mxCreateDoubleMatrix(1, pnp, mxREAL); /* point  parameters */
+    mdata.rhs[0]=mxCreateDoubleMatrix(1, 1, mxREAL); /* camera index */
+    mdata.rhs[1]=mxCreateDoubleMatrix(1, 1, mxREAL); /* point index */
+    mdata.rhs[2]=mxCreateDoubleMatrix(1, cnp, mxREAL); /* camera parameters */
+    mdata.rhs[3]=mxCreateDoubleMatrix(1, pnp, mxREAL); /* point  parameters */
 
     mdata.dynadata=NULL;
   }
@@ -1006,7 +1047,7 @@ clock_t start_time, end_time;
 
   /* ensure that the supplied matlab function & Jacobian are as expected */
   if((!havedynproj || !havedynprojac) && /* at least one in matlab */
-      checkFuncAndJacobianMATLAB(p, p+m*cnp, !havedynproj, havejac && !havedynprojac, reftype, &mdata)){ /* check using first camera & first point */
+      checkFuncAndJacobianMATLAB(0, 0, p, p+m*cnp, !havedynproj, havejac && !havedynprojac, reftype, &mdata)){ /* check using first camera & first point */
     status=SBA_ERROR;
     goto cleanup;
   }
@@ -1017,7 +1058,7 @@ clock_t start_time, end_time;
     case BA_MOTSTRUCT:
       minnvars=nvars;
       mdata.pa=mdata.pb=NULL; /* not needed */
-      status=sba_motstr_levmar(n, m, mcon, vmask, p, cnp, pnp, x, covx, mnp,
+      status=sba_motstr_levmar(n, ncon, m, mcon, vmask, p, cnp, pnp, x, covx, mnp,
                               (havedynproj)? proj_motstrDL : proj_motstrMATLAB, (havejac)? (havedynprojac? projac_motstrDL : projac_motstrMATLAB) : NULL,
                               (void *)&mdata, itmax, verbose>1, opts, info);
       break;
@@ -1034,7 +1075,7 @@ clock_t start_time, end_time;
       minnvars=n*pnp;
       mdata.pa=p;
       mdata.pb=NULL; /* not needed */
-      status=sba_str_levmar(n, m, vmask, p+m*cnp, pnp, x, covx, mnp,
+      status=sba_str_levmar(n, ncon, m, vmask, p+m*cnp, pnp, x, covx, mnp,
                             (havedynproj)? proj_strDL : proj_strMATLAB, (havejac)? (havedynprojac? projac_strDL : projac_strMATLAB) : NULL,
                             (void *)&mdata, itmax, verbose>1, opts, info);
       break;
@@ -1096,24 +1137,24 @@ cleanup:
 
   /* unload libraries */
   if(havedynproj){
-#ifdef WIN32
+#ifdef _WIN32
     i=FreeLibrary(mdata.projlibhandle);
     if(i==0)
 #else
     i=dlclose(mdata.projlibhandle);
     if(i!=0)
-#endif
+#endif /* _WIN32 */
       matlabFmtdErrMsgTxt("sba: error unloading dynamic library %s!\n", mdata.projlibname);
   }
   if(havedynprojac){
     if(mdata.projaclibhandle!=mdata.projlibhandle){
-#ifdef WIN32
+#ifdef _WIN32
       i=FreeLibrary(mdata.projaclibhandle);
       if(i==0)
 #else
       i=dlclose(mdata.projaclibhandle);
       if(i!=0)
-#endif
+#endif /* _WIN32 */
         matlabFmtdErrMsgTxt("sba: error unloading dynamic library %s!\n", mdata.projaclibname);
     }
   }

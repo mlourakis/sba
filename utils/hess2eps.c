@@ -2,7 +2,7 @@
 //// 
 ////  Visualization of the nonzero pattern of JtJ in EPS format.
 ////  This is part of the sba package,
-////  Copyright (C) 2004  Manolis Lourakis (lourakis@ics.forth.gr)
+////  Copyright (C) 2004  Manolis Lourakis (lourakis at ics.forth.gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////

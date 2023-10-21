@@ -2,7 +2,7 @@
 //// 
 ////  Expert drivers for sparse bundle adjustment based on the
 ////  Levenberg - Marquardt minimization algorithm
-////  Copyright (C) 2004-2008 Manolis Lourakis (lourakis at ics forth gr)
+////  Copyright (C) 2004-2009 Manolis Lourakis (lourakis at ics forth gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////
@@ -448,6 +448,9 @@ typedef int (*PLS)(double *A, double *B, double *x, int m, int iscolmaj);
 
 int sba_motstr_levmar_x(
     const int n,   /* number of points */
+    const int ncon,/* number of points (starting from the 1st) whose parameters should not be modified.
+                   * All B_ij (see below) with i<ncon are assumed to be zero
+                   */
     const int m,   /* number of images */
     const int mcon,/* number of images (starting from the 1st) whose parameters should not be modified.
 					          * All A_ij (see below) with j<mcon are assumed to be zero
@@ -659,13 +662,13 @@ void *jac_adata;
   maxCPvis=(maxCvis>=maxPvis)? maxCvis : maxPvis;
 
 #if 0
-  /* determine the density of matrix S */
+  /* determine the density of blocks in matrix S */
   for(j=mcon, ii=0; j<m; ++j){
     ++ii; /* block Sjj is surely nonzero */
     for(k=j+1; k<m; ++k)
       if(sba_crsm_common_row(&idxij, j, k)) ii+=2; /* blocks Sjk & Skj are nonzero */
   }
-  printf("\nS density: %.5g\n", ((double)ii)/(mmcon*mmcon)); fflush(stdout);
+  printf("\nS block density: %.5g\n", ((double)ii)/(mmcon*mmcon)); fflush(stdout);
 #endif
 
   /* allocate work arrays */
@@ -710,7 +713,7 @@ void *jac_adata;
    * b) Wsz<ABsz: Then p1=W+k*Wsz and p2=jac+k*ABsz=W+Wsz+k*ABsz and
    *    p2-p1=Wsz+k*(ABsz-Wsz), which is again > Wsz for all 0<=k<nvis
    *
-   * Concluding, if jac is initialized as below, the memory allocated to all
+   * In conclusion, if jac is initialized as below, the memory allocated to all
    * W_ij is guaranteed not to overlap with that allocated to their corresponding
    * A_ij, B_ij pairs
    */
@@ -744,7 +747,7 @@ void *jac_adata;
   }
 
   if(itmax==0){ /* verify jacobian */
-    sba_motstr_chkjac_x(func, fjac, p, &idxij, rcidxs, rcsubs, mcon, cnp, pnp, mnp, adata, jac_adata);
+    sba_motstr_chkjac_x(func, fjac, p, &idxij, rcidxs, rcsubs, ncon, mcon, cnp, pnp, mnp, adata, jac_adata);
     retval=0;
     goto freemem_and_return;
   }
@@ -875,7 +878,7 @@ void *jac_adata;
      */
 	  _dblzero(V, n*Vsz); /* clear all V_i */
 	  _dblzero(eb, n*ebsz); /* clear all eb_i */
-    for(i=0; i<n; ++i){
+    for(i=ncon; i<n; ++i){
       ptr1=V + i*Vsz; // set ptr1 to point to V_i
       ptr2=eb + i*ebsz; // set ptr2 to point to eb_i
 
@@ -906,14 +909,14 @@ void *jac_adata;
     /* compute W_ij =  A_ij^T B_ij */ // \Sigma here!
     /* Recall that A_ij is mnp x cnp and B_ij is mnp x pnp
      */
-    for(i=0; i<n; ++i){
+    for(i=ncon; i<n; ++i){
       nnz=sba_crsm_row_elmidxs(&idxij, i, rcidxs, rcsubs); /* find nonzero W_ij, j=0...m-1 */
       for(j=0; j<nnz; ++j){
         /* set ptr1 to point to W_ij, actual column number in rcsubs[j] */
         ptr1=W + idxij.val[rcidxs[j]]*Wsz;
 
         if(rcsubs[j]<mcon){ /* A_ij is zero */
-          _dblzero(ptr1, Wsz); /* clear W_ij */
+          //_dblzero(ptr1, Wsz); /* clear W_ij */
           continue;
         }
 
@@ -950,7 +953,7 @@ void *jac_adata;
       for(i=0; i<cnp; ++i)
         ptr2[i]=ptr1[i*cnp+i];
     }
-    for(i=0; i<n; ++i){
+    for(i=ncon; i<n; ++i){
       ptr1=V + i*Vsz; // set ptr1 to point to V_i
       ptr2=diagV + i*pnp; // set ptr2 to point to diagV_i
       for(j=0; j<pnp; ++j)
@@ -975,8 +978,11 @@ if(!(itno%100)){
 
    /* compute initial damping factor */
     if(itno==0){
-      for(i=mcon*cnp, tmp=DBL_MIN; i<nvars; ++i)
-        if(diagUV[i]>tmp) tmp=diagUV[i]; /* find max diagonal element */
+      /* find max diagonal element */
+      for(i=mcon*cnp, tmp=DBL_MIN; i<m*cnp; ++i)
+        if(diagUV[i]>tmp) tmp=diagUV[i];
+      for(i=m*cnp + ncon*pnp; i<nvars; ++i) /* tmp is not re-initialized! */
+        if(diagUV[i]>tmp) tmp=diagUV[i];
       mu=tau*tmp;
     }
 
@@ -988,7 +994,7 @@ if(!(itno%100)){
         for(i=0; i<cnp; ++i)
           ptr1[i*cnp+i]+=mu;
       }
-      for(i=0; i<n; ++i){
+      for(i=ncon; i<n; ++i){
         ptr1=V + i*Vsz; // set ptr1 to point to V_i
         for(j=0; j<pnp; ++j)
           ptr1[j*pnp+j]+=mu;
@@ -1020,6 +1026,19 @@ if(!(itno%100)){
         int mmconxUsz=mmcon*Usz;
 
 		    nnz=sba_crsm_col_elmidxs(&idxij, j, rcidxs, rcsubs); /* find nonzero Y_ij, i=0...n-1 */
+
+        /* get rid of all Y_ij with i<ncon that are treated as zeros.
+         * In this way, all rcsubs[i] below are guaranteed to be >= ncon
+         */
+        if(ncon){
+          for(i=ii=0; i<nnz; ++i){
+            if(rcsubs[i]>=ncon){
+              rcidxs[ii]=rcidxs[i];
+              rcsubs[ii++]=rcsubs[i];
+            }
+          }
+          nnz=ii;
+        }
 
         /* compute all Y_ij = W_ij (V*_i)^-1 for a *fixed* j.
          * To save memory, the block matrix consisting of the Y_ij
@@ -1193,7 +1212,7 @@ if(!(itno%100)){
       if(issolved){
 
         /* compute the db_i */
-        for(i=0; i<n; ++i){
+        for(i=ncon; i<n; ++i){
           ptr1=dpb + i*ebsz; // set ptr1 to point to db_i
 
           /* compute \sum_j W_ij^T da_j */
@@ -1234,6 +1253,7 @@ if(!(itno%100)){
             ptr1[ii]=sum;
           }
         }
+	      _dblzero(dpb, ncon*pnp); /* no change for the first ncon point params */
 
         /* parameter vector updates are now in dpa, dpb */
 
@@ -1316,6 +1336,7 @@ moredamping:
       }
       nu=nu2;
 
+#if 0
       /* restore U, V diagonal entries */
       for(j=mcon; j<m; ++j){
         ptr1=U + j*Usz; // set ptr1 to point to U_j
@@ -1323,12 +1344,13 @@ moredamping:
         for(i=0; i<cnp; ++i)
           ptr1[i*cnp+i]=ptr2[i];
       }
-      for(i=0; i<n; ++i){
+      for(i=ncon; i<n; ++i){
         ptr1=V + i*Vsz; // set ptr1 to point to V_i
         ptr2=diagV + i*pnp; // set ptr2 to point to diagV_i
         for(j=0; j<pnp; ++j)
           ptr1[j*pnp+j]=ptr2[j];
       }
+#endif
     } /* inner while loop */
 
     if(p_eL2<=eps3_sq) stop=5; // error is small, force termination of outer loop
@@ -1343,7 +1365,7 @@ moredamping:
     for(i=0; i<cnp; ++i)
       ptr1[i*cnp+i]=ptr2[i];
   }
-  for(i=0; i<n; ++i){
+  for(i=ncon; i<n; ++i){
     ptr1=V + i*Vsz; // set ptr1 to point to V_i
     ptr2=diagV + i*pnp; // set ptr2 to point to diagV_i
     for(j=0; j<pnp; ++j)
@@ -1360,7 +1382,7 @@ moredamping:
       for(i=0; i<cnp; ++i)
         if(tmp<ptr1[i*cnp+i]) tmp=ptr1[i*cnp+i];
     }
-    for(i=0; i<n; ++i){
+    for(i=ncon; i<n; ++i){
       ptr1=V + i*Vsz; // set ptr1 to point to V_i
       for(j=0; j<pnp; ++j)
         if(tmp<ptr1[j*pnp+j]) tmp=ptr1[j*pnp+j];
@@ -1884,6 +1906,7 @@ if(!(itno%100)){
       }
       nu=nu2;
 
+#if 0
       /* restore U diagonal entries */
       for(j=mcon; j<m; ++j){
         ptr1=U + j*Usz; // set ptr1 to point to U_j
@@ -1891,6 +1914,7 @@ if(!(itno%100)){
         for(i=0; i<cnp; ++i)
           ptr1[i*cnp+i]=ptr2[i];
       }
+#endif
     } /* inner while loop */
 
     if(p_eL2<=eps3_sq) stop=5; // error is small, force termination of outer loop
@@ -1962,6 +1986,9 @@ freemem_and_return: /* NOTE: this point is also reached via a goto! */
 
 int sba_str_levmar_x(
     const int n,   /* number of points */
+    const int ncon,/* number of points (starting from the 1st) whose parameters should not be modified.
+                   * All B_ij (see below) with i<ncon are assumed to be zero
+                   */
     const int m,   /* number of images */
     char *vmask,  /* visibility mask: vmask[i, j]=1 if point i visible in image j, 0 otherwise. nxm */
     double *p,    /* initial parameter vector p0: (b1, ..., bn).
@@ -2171,7 +2198,7 @@ void *jac_adata;
   }
 
   if(itmax==0){ /* verify jacobian */
-    sba_str_chkjac_x(func, fjac, p, &idxij, rcidxs, rcsubs, pnp, mnp, adata, jac_adata);
+    sba_str_chkjac_x(func, fjac, p, &idxij, rcidxs, rcsubs, ncon, pnp, mnp, adata, jac_adata);
     retval=0;
     goto freemem_and_return;
   }
@@ -2248,7 +2275,7 @@ void *jac_adata;
      */
 	  _dblzero(V, n*Vsz); /* clear all V_i */
 	  _dblzero(eb, n*ebsz); /* clear all eb_i */
-    for(i=0; i<n; ++i){
+    for(i=ncon; i<n; ++i){
       ptr1=V + i*Vsz; // set ptr1 to point to V_i
       ptr2=eb + i*ebsz; // set ptr2 to point to eb_i
 
@@ -2290,7 +2317,7 @@ void *jac_adata;
     /* save diagonal entries so that augmentation can be later canceled.
      * Diagonal entries are in V_i
      */
-    for(i=0; i<n; ++i){
+    for(i=ncon; i<n; ++i){
       ptr1=V + i*Vsz; // set ptr1 to point to V_i
       ptr2=diagV + i*pnp; // set ptr2 to point to diagV_i
       for(j=0; j<pnp; ++j)
@@ -2315,7 +2342,7 @@ if(!(itno%100)){
 
    /* compute initial damping factor */
     if(itno==0){
-      for(i=0, tmp=DBL_MIN; i<nvars; ++i)
+      for(i=ncon*pnp, tmp=DBL_MIN; i<nvars; ++i)
         if(diagV[i]>tmp) tmp=diagV[i]; /* find max diagonal element */
       mu=tau*tmp;
     }
@@ -2323,14 +2350,15 @@ if(!(itno%100)){
     /* determine increment using adaptive damping */
     while(1){
       /* augment V */
-      for(i=0; i<n; ++i){
+      for(i=ncon; i<n; ++i){
         ptr1=V + i*Vsz; // set ptr1 to point to V_i
         for(j=0; j<pnp; ++j)
           ptr1[j*pnp+j]+=mu;
       }
 
       /* solve the linear systems V*_i db_i = eb_i to compute the db_i */
-      for(i=nsolved=0; i<n; ++i){
+      _dblzero(dp, ncon*pnp); /* no change for the first ncon point params */
+      for(i=nsolved=ncon; i<n; ++i){
         ptr1=V + i*Vsz; // set ptr1 to point to V_i
         ptr2=eb + i*ebsz; // set ptr2 to point to eb_i
         ptr3=dp + i*pnp; // set ptr3 to point to db_i
@@ -2428,13 +2456,15 @@ if(!(itno%100)){
       }
       nu=nu2;
 
+#if 0
       /* restore V diagonal entries */
-      for(i=0; i<n; ++i){
+      for(i=ncon; i<n; ++i){
         ptr1=V + i*Vsz; // set ptr1 to point to V_i
         ptr2=diagV + i*pnp; // set ptr2 to point to diagV_i
         for(j=0; j<pnp; ++j)
           ptr1[j*pnp+j]=ptr2[j];
       }
+#endif
     } /* inner while loop */
 
     if(p_eL2<=eps3_sq) stop=5; // error is small, force termination of outer loop
@@ -2443,7 +2473,7 @@ if(!(itno%100)){
   if(itno>=itmax) stop=3;
 
   /* restore V diagonal entries */
-  for(i=0; i<n; ++i){
+  for(i=ncon; i<n; ++i){
     ptr1=V + i*Vsz; // set ptr1 to point to V_i
     ptr2=diagV + i*pnp; // set ptr2 to point to diagV_i
     for(j=0; j<pnp; ++j)
@@ -2455,7 +2485,7 @@ if(!(itno%100)){
     info[1]=p_eL2;
     info[2]=eb_inf;
     info[3]=dp_L2;
-    for(i=0; i<n; ++i){
+    for(i=ncon; i<n; ++i){
       ptr1=V + i*Vsz; // set ptr1 to point to V_i
       for(j=0; j<pnp; ++j)
         if(tmp<ptr1[j*pnp+j]) tmp=ptr1[j*pnp+j];

@@ -3,7 +3,7 @@
 ////  Simple drivers for sparse bundle adjustment based on the
 ////  Levenberg - Marquardt minimization algorithm
 ////  This file provides simple wrappers to the functions defined in sba_levmar.c
-////  Copyright (C) 2004-2008 Manolis Lourakis (lourakis at ics forth gr)
+////  Copyright (C) 2004-2009 Manolis Lourakis (lourakis at ics forth gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////
@@ -598,6 +598,9 @@ static void sba_str_Qs_fdjac(
 
 int sba_motstr_levmar(
     const int n,   /* number of points */
+    const int ncon,/* number of points (starting from the 1st) whose parameters should not be modified.
+                    * All B_ij (see below) with i<ncon are assumed to be zero
+                    */
     const int m,   /* number of images */
     const int mcon,/* number of images (starting from the 1st) whose parameters should not be modified.
 					          * All A_ij (see below) with j<mcon are assumed to be zero
@@ -676,7 +679,7 @@ static void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs,
   wdata.adata=adata;
 
   fjac=(projac)? sba_motstr_Qs_jac : sba_motstr_Qs_fdjac;
-  retval=sba_motstr_levmar_x(n, m, mcon, vmask, p, cnp, pnp, x, covx, mnp, sba_motstr_Qs, fjac, &wdata, itmax, verbose, opts, info);
+  retval=sba_motstr_levmar_x(n, ncon, m, mcon, vmask, p, cnp, pnp, x, covx, mnp, sba_motstr_Qs, fjac, &wdata, itmax, verbose, opts, info);
 
   if(info){
     register int i;
@@ -801,6 +804,9 @@ void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double
 
 int sba_str_levmar(
     const int n,   /* number of points */
+    const int ncon,/* number of points (starting from the 1st) whose parameters should not be modified.
+                    * All B_ij (see below) with i<ncon are assumed to be zero
+                    */
     const int m,   /* number of images */
     char *vmask,  /* visibility mask: vmask[i, j]=1 if point i visible in image j, 0 otherwise. nxm */
     double *p,    /* initial parameter vector p0: (b1, ..., bn).
@@ -871,7 +877,7 @@ static void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs,
   wdata.adata=adata;
 
   fjac=(projac)? sba_str_Qs_jac : sba_str_Qs_fdjac;
-  retval=sba_str_levmar_x(n, m, vmask, p, pnp, x, covx, mnp, sba_str_Qs, fjac, &wdata, itmax, verbose, opts, info);
+  retval=sba_str_levmar_x(n, ncon, m, vmask, p, pnp, x, covx, mnp, sba_str_Qs, fjac, &wdata, itmax, verbose, opts, info);
 
   if(info){
     register int i;

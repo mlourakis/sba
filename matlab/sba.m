@@ -1,4 +1,4 @@
-function [ret, popt, info]=sba(n, m, mcon, vmask, p0, cnp, pnp, x, mnp, proj, projac, itmax, verbose, opts, reftype, varargin)
+function [ret, popt, info]=sba(n, ncon, m, mcon, vmask, p0, cnp, pnp, x, mnp, proj, projac, itmax, verbose, opts, reftype, varargin)
 % SBA  matlab MEX interface to the sba generic sparse bundle adjustment 
 % library available from http://www.ics.forth.gr/~lourakis/sba/
 % 
@@ -10,6 +10,8 @@ function [ret, popt, info]=sba(n, m, mcon, vmask, p0, cnp, pnp, x, mnp, proj, pr
 %
 % required input arguments:
 % - n: number of 3D points
+%
+% - ncon: number of 3D points whose parameters should not be modified
 %
 % - m: number of images
 %
@@ -80,7 +82,7 @@ function [ret, popt, info]=sba(n, m, mcon, vmask, p0, cnp, pnp, x, mnp, proj, pr
 %
 % - reftype: String defining the type of refinement to be carried out. It should be one of the following:
 %      'motstr' refinement of motion & structure, default
-%      'mot'    refinement of motion only
+%      'mot'    refinement of motion only (ncon is redundant in this case)
 %      'str'    refinement of structure only (mcon is redundant in this case)
 %      If omitted, a default of 'motstr' is assumed. Depending on the minimization type, the MEX
 %      interface will invoke one of sba_motstr_levmar(), sba_mot_levmar() or sba_str_levmar()

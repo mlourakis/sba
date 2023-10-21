@@ -1,7 +1,7 @@
 /////////////////////////////////////////////////////////////////////////////////
 //// 
 ////  Linear algebra operations for the sba package
-////  Copyright (C) 2004-2008 Manolis Lourakis (lourakis at ics forth gr)
+////  Copyright (C) 2004-2009 Manolis Lourakis (lourakis at ics forth gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////
@@ -16,6 +16,17 @@
 ////  GNU General Public License for more details.
 ////
 ///////////////////////////////////////////////////////////////////////////////////
+
+/* A note on memory alignment:
+ *
+ * Several of the functions below use a piece of dynamically allocated memory
+ * to store variables of different size (i.e., ints and doubles). To avoid
+ * alignment problems, care must be taken so that elements that are larger
+ * (doubles) are stored before smaller ones (ints). This ensures proper
+ * alignment under different alignment choices made by different CPUs:
+ * For instance, a double variable is aligned on x86 to 4 bytes but
+ * aligned to 8 bytes on AMD64 despite having the same size of 8 bytes.
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,8 +53,8 @@ extern int F77_FUNC(dorgqr)(int *m, int *n, int *k, double *a, int *lda, double 
 /* solution of triangular system */
 extern int F77_FUNC(dtrtrs)(char *uplo, char *trans, char *diag, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb, int *info);
 
-/* cholesky decomposition, linear system solution and matrix inversion */
-extern int F77_FUNC(dpotf2)(char *uplo, int *n, double *a, int *lda, int *info); /* unblocked cholesky */
+/* Cholesky decomposition, linear system solution and matrix inversion */
+extern int F77_FUNC(dpotf2)(char *uplo, int *n, double *a, int *lda, int *info); /* unblocked Cholesky */
 extern int F77_FUNC(dpotrf)(char *uplo, int *n, double *a, int *lda, int *info); /* block version of dpotf2 */
 extern int F77_FUNC(dpotrs)(char *uplo, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb, int *info);
 extern int F77_FUNC(dpotri)(char *uplo, int *n, double *a, int *lda, int *info);
@@ -67,7 +78,7 @@ extern int F77_FUNC(dgesdd)(char *jobz, int *m, int *n, double *a, int *lda,
 
 
 /* Bunch-Kaufman factorization of a real symmetric matrix A, solution of linear systems and matrix inverse */
-extern int F77_FUNC(dsytrf)(char *uplo, int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info);
+extern int F77_FUNC(dsytrf)(char *uplo, int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info); /* blocked ver. */
 extern int F77_FUNC(dsytrs)(char *uplo, int *n, int *nrhs, double *a, int *lda, int *ipiv, double *b, int *ldb, int *info);
 extern int F77_FUNC(dsytri)(char *uplo, int *n, double *a, int *lda, int *ipiv, double *work, int *info);
 
@@ -95,8 +106,8 @@ int sba_Axb_QR(double *A, double *B, double *x, int m, int iscolmaj)
 static double *buf=NULL;
 static int buf_sz=0, nb=0;
 
-double *a, *qtb, *r, *tau, *work;
-int a_sz, qtb_sz, r_sz, tau_sz, tot_sz;
+double *a, *r, *tau, *work;
+int a_sz, r_sz, tau_sz, tot_sz;
 register int i, j;
 int info, worksz, nrhs=1;
 register double sum;
@@ -111,7 +122,6 @@ register double sum;
 
     /* calculate required memory size */
     a_sz=(iscolmaj)? 0 : m*m;
-    qtb_sz=m;
     r_sz=m*m; /* only the upper triangular part really needed */
     tau_sz=m;
     if(!nb){
@@ -126,7 +136,7 @@ register double sum;
 #endif /* SBA_LS_SCARCE_MEMORY */
     }
     worksz=nb*m;
-    tot_sz=a_sz + qtb_sz + r_sz + tau_sz + worksz;
+    tot_sz=a_sz + r_sz + tau_sz + worksz;
 
     if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
       if(buf) free(buf); /* free previously allocated memory */
@@ -148,8 +158,7 @@ register double sum;
     }
     else a=A; /* no copying required */
 
-    qtb=buf+a_sz;
-    r=qtb+qtb_sz;
+    r=buf+a_sz;
     tau=r+r_sz;
     work=tau+tau_sz;
 
@@ -184,15 +193,15 @@ register double sum;
     }
   }
 
-  /* Q is now in a; compute Q^T b in qtb */
+  /* Q is now in a; compute Q^T b in x */
   for(i=0; i<m; ++i){
     for(j=0, sum=0.0; j<m; ++j)
       sum+=a[i*m+j]*B[j];
-    qtb[i]=sum;
+    x[i]=sum;
   }
 
   /* solve the linear system R x = Q^t b */
-  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, r, (int *)&m, qtb, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, r, (int *)&m, x, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -204,10 +213,6 @@ register double sum;
       return 0;
     }
   }
-
-	/* copy the result in x */
-	for(i=0; i<m; ++i)
-    x[i]=qtb[i];
 
 	return 1;
 }
@@ -237,8 +242,8 @@ int sba_Axb_QRnoQ(double *A, double *B, double *x, int m, int iscolmaj)
 static double *buf=NULL;
 static int buf_sz=0, nb=0;
 
-double *a, *atb, *tau, *work;
-int a_sz, atb_sz, tau_sz, tot_sz;
+double *a, *tau, *work;
+int a_sz, tau_sz, tot_sz;
 register int i, j;
 int info, worksz, nrhs=1;
 register double sum;
@@ -253,7 +258,6 @@ register double sum;
 
     /* calculate required memory size */
     a_sz=(iscolmaj)? 0 : m*m;
-    atb_sz=m;
     tau_sz=m;
     if(!nb){
 #ifndef SBA_LS_SCARCE_MEMORY
@@ -267,7 +271,7 @@ register double sum;
 #endif /* SBA_LS_SCARCE_MEMORY */
     }
     worksz=nb*m;
-    tot_sz=a_sz + atb_sz + tau_sz + worksz;
+    tot_sz=a_sz + tau_sz + worksz;
 
     if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
       if(buf) free(buf); /* free previously allocated memory */
@@ -289,15 +293,14 @@ register double sum;
     }
     else a=A; /* no copying required */
 
-    atb=buf+a_sz;
-    tau=atb+atb_sz;
+    tau=buf+a_sz;
     work=tau+tau_sz;
 
-  /* compute A^T b in atb */
+  /* compute A^T b in x */
   for(i=0; i<m; ++i){
     for(j=0, sum=0.0; j<m; ++j)
       sum+=a[i*m+j]*B[j];
-    atb[i]=sum;
+    x[i]=sum;
   }
 
   /* QR decomposition of A */
@@ -317,7 +320,7 @@ register double sum;
   /* R is stored in the upper triangular part of a */
 
   /* solve the linear system R^T y = A^t b */
-  F77_FUNC(dtrtrs)("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, atb, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, x, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -331,7 +334,7 @@ register double sum;
   }
 
   /* solve the linear system R x = y */
-  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, atb, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, x, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -343,10 +346,6 @@ register double sum;
       return 0;
     }
   }
-
-	/* copy the result in x */
-	for(i=0; i<m; ++i)
-    x[i]=atb[i];
 
 	return 1;
 }
@@ -362,7 +361,7 @@ register double sum;
  *
  * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
- * this function modifies A and B!
+ * this function modifies A!
  *
  * The function returns 0 in case of error, 1 if successfull
  *
@@ -376,8 +375,8 @@ int sba_Axb_Chol(double *A, double *B, double *x, int m, int iscolmaj)
 static double *buf=NULL;
 static int buf_sz=0;
 
-double *a, *b;
-int a_sz, b_sz, tot_sz;
+double *a;
+int a_sz, tot_sz;
 register int i, j;
 int info, nrhs=1;
    
@@ -391,8 +390,7 @@ int info, nrhs=1;
 
     /* calculate required memory size */
     a_sz=(iscolmaj)? 0 : m*m;
-    b_sz=(iscolmaj)? 0 : m;
-    tot_sz=a_sz + b_sz;
+    tot_sz=a_sz;
 
     if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
       if(buf) free(buf); /* free previously allocated memory */
@@ -407,21 +405,21 @@ int info, nrhs=1;
 
     if(!iscolmaj){
     	a=buf;
-    	b=a+a_sz;
 
-      /* store A into a and B into b; A is assumed to be symmetric, hence
+      /* store A into a and B into x; A is assumed to be symmetric, hence
        * the column and row major order representations are the same
        */
       for(i=0; i<m; ++i){
         a[i]=A[i];
-        b[i]=B[i];
+        x[i]=B[i];
       }
       for(j=m*m; i<j; ++i) // copy remaining rows; note that i is not re-initialized
         a[i]=A[i];
     }
-    else{ /* no copying is necessary */
+    else{ /* no copying is necessary for A */
       a=A;
-      b=B;
+      for(i=0; i<m; ++i)
+        x[i]=B[i];
     }
 
   /* Cholesky decomposition of A */
@@ -441,15 +439,15 @@ int info, nrhs=1;
 
   /* below are two alternative ways for solving the linear system: */
 #if 1
-  /* use the computed cholesky in one lapack call */
-  F77_FUNC(dpotrs)("U", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
+  /* use the computed Cholesky in one lapack call */
+  F77_FUNC(dpotrs)("U", (int *)&m, (int *)&nrhs, a, (int *)&m, x, (int *)&m, &info);
   if(info<0){
     fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotrs in sba_Axb_Chol()\n", -info);
     exit(1);
   }
 #else
   /* solve the linear systems U^T y = b, U x = y */
-  F77_FUNC(dtrtrs)("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, x, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -463,7 +461,7 @@ int info, nrhs=1;
   }
 
   /* solve U x = y */
-  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, x, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -476,10 +474,6 @@ int info, nrhs=1;
     }
   }
 #endif /* 1 */
-
-	/* copy the result in x */
-	for(i=0; i<m; ++i)
-    x[i]=b[i];
 
 	return 1;
 }
@@ -494,7 +488,7 @@ int info, nrhs=1;
  *
  * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
- * this function modifies A and B!
+ * this function modifies A!
  *
  * The function returns 0 in case of error,
  * 1 if successfull
@@ -509,10 +503,10 @@ int sba_Axb_LU(double *A, double *B, double *x, int m, int iscolmaj)
 static double *buf=NULL;
 static int buf_sz=0;
 
-int a_sz, ipiv_sz, b_sz, tot_sz;
+int a_sz, ipiv_sz, tot_sz;
 register int i, j;
 int info, *ipiv, nrhs=1;
-double *a, *b;
+double *a;
    
     if(A==NULL){
       if(buf) free(buf);
@@ -525,8 +519,7 @@ double *a, *b;
     /* calculate required memory size */
     ipiv_sz=m;
     a_sz=(iscolmaj)? 0 : m*m;
-    b_sz=(iscolmaj)? 0 : m;
-    tot_sz=ipiv_sz*sizeof(int) + (a_sz + b_sz)*sizeof(double);
+    tot_sz=a_sz*sizeof(double) + ipiv_sz*sizeof(int); /* should be arranged in that order for proper doubles alignment */
 
     if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
       if(buf) free(buf); /* free previously allocated memory */
@@ -539,22 +532,23 @@ double *a, *b;
       }
     }
 
-    ipiv=(int *)buf;
     if(!iscolmaj){
-    	a=(double *)(ipiv + ipiv_sz);
-    	b=a+a_sz;
+      a=buf;
+      ipiv=(int *)(a+a_sz);
 
-    /* store A (column major!) into a and B into b */
-	  for(i=0; i<m; ++i){
-		  for(j=0; j<m; ++j)
-        	a[i+j*m]=A[i*m+j];
+      /* store A (column major!) into a and B into x */
+	    for(i=0; i<m; ++i){
+		    for(j=0; j<m; ++j)
+          a[i+j*m]=A[i*m+j];
 
-      	b[i]=B[i];
-    	}
+        x[i]=B[i];
+      }
     }
-    else{ /* no copying is necessary */
+    else{ /* no copying is necessary for A */
       a=A;
-      b=B;
+      for(i=0; i<m; ++i)
+        x[i]=B[i];
+      ipiv=(int *)buf;
     }
 
   /* LU decomposition for A */
@@ -571,7 +565,7 @@ double *a, *b;
 	}
 
   /* solve the system with the computed LU */
-  F77_FUNC(dgetrs)("N", (int *)&m, (int *)&nrhs, a, (int *)&m, ipiv, b, (int *)&m, (int *)&info);
+  F77_FUNC(dgetrs)("N", (int *)&m, (int *)&nrhs, a, (int *)&m, ipiv, x, (int *)&m, (int *)&info);
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dgetrs illegal in sba_Axb_LU()\n", -info);
@@ -581,11 +575,6 @@ double *a, *b;
 			fprintf(stderr, "unknown error for dgetrs in sba_Axb_LU()\n");
 			return 0;
 		}
-	}
-
-	/* copy the result in x */
-	for(i=0; i<m; ++i){
-		x[i]=b[i];
 	}
 
 	return 1;
@@ -648,7 +637,7 @@ int info, rank, worksz, *iwork, iworksz;
   a_sz=(!iscolmaj)? m*m : 0;
   u_sz=m*m; s_sz=m; vt_sz=m*m;
 
-  tot_sz=iworksz*sizeof(int) + (a_sz + u_sz + s_sz + vt_sz + worksz)*sizeof(double);
+  tot_sz=(a_sz + u_sz + s_sz + vt_sz + worksz)*sizeof(double) + iworksz*sizeof(int); /* should be arranged in that order for proper doubles alignment */
 
   if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
     if(buf) free(buf); /* free previously allocated memory */
@@ -661,9 +650,9 @@ int info, rank, worksz, *iwork, iworksz;
     }
   }
 
-  iwork=(int *)buf;
   if(!iscolmaj){
-    a=(double *)(iwork+iworksz);
+    a=buf;
+    u=a+a_sz;
     /* store A (column major!) into a */
     for(i=0; i<m; ++i)
       for(j=0; j<m; ++j)
@@ -671,12 +660,13 @@ int info, rank, worksz, *iwork, iworksz;
   }
   else{
     a=A; /* no copying required */
+    u=buf;
   }
 
-  u=((double *)(iwork+iworksz)) + a_sz;
   s=u+u_sz;
   vt=s+s_sz;
   work=vt+vt_sz;
+  iwork=(int *)(work+worksz);
 
   /* SVD decomposition of A */
   F77_FUNC(dgesdd)("A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, iwork, &info);
@@ -735,7 +725,7 @@ int info, rank, worksz, *iwork, iworksz;
  *
  * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
- * this function modifies A and B!
+ * this function modifies A!
  *
  * The function returns 0 in case of error,
  * 1 if successfull
@@ -750,10 +740,10 @@ int sba_Axb_BK(double *A, double *B, double *x, int m, int iscolmaj)
 static double *buf=NULL;
 static int buf_sz=0, nb=0;
 
-int a_sz, ipiv_sz, b_sz, work_sz, tot_sz;
+int a_sz, ipiv_sz, work_sz, tot_sz;
 register int i, j;
 int info, *ipiv, nrhs=1;
-double *a, *b, *work;
+double *a, *work;
    
     if(A==NULL){
       if(buf) free(buf);
@@ -766,7 +756,6 @@ double *a, *b, *work;
     /* calculate required memory size */
     ipiv_sz=m;
     a_sz=(iscolmaj)? 0 : m*m;
-    b_sz=(iscolmaj)? 0 : m;
     if(!nb){
 #ifndef SBA_LS_SCARCE_MEMORY
       double tmp;
@@ -779,7 +768,7 @@ double *a, *b, *work;
 #endif /* SBA_LS_SCARCE_MEMORY */
     }
     work_sz=(nb!=-1)? nb*m : 1;
-    tot_sz=ipiv_sz*sizeof(int) + (a_sz + b_sz + work_sz)*sizeof(double);
+    tot_sz=(a_sz + work_sz)*sizeof(double) + ipiv_sz*sizeof(int); /* should be arranged in that order for proper doubles alignment */
 
     if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
       if(buf) free(buf); /* free previously allocated memory */
@@ -792,27 +781,27 @@ double *a, *b, *work;
       }
     }
 
-    ipiv=(int *)buf;
     if(!iscolmaj){
-    	a=(double *)(ipiv + ipiv_sz);
-    	b=a+a_sz;
-    	work=b+b_sz;
+      a=buf;
+    	work=a+a_sz;
 
-      /* store A into a and B into b; A is assumed to be symmetric, hence
+      /* store A into a and B into x; A is assumed to be symmetric, hence
        * the column and row major order representations are the same
        */
       for(i=0; i<m; ++i){
         a[i]=A[i];
-        b[i]=B[i];
+        x[i]=B[i];
       }
       for(j=m*m; i<j; ++i) // copy remaining rows; note that i is not re-initialized
         a[i]=A[i];
     }
-    else{ /* no copying is necessary */
+    else{ /* no copying is necessary for A */
       a=A;
-      b=B;
-    	work=(double *)(ipiv + ipiv_sz);
+      for(i=0; i<m; ++i)
+        x[i]=B[i];
+      work=buf;
     }
+    ipiv=(int *)(work+work_sz);
 
   /* factorization for A */
 	F77_FUNC(dsytrf)("U", (int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
@@ -828,7 +817,7 @@ double *a, *b, *work;
 	}
 
   /* solve the system with the computed factorization */
-  F77_FUNC(dsytrs)("U", (int *)&m, (int *)&nrhs, a, (int *)&m, ipiv, b, (int *)&m, (int *)&info);
+  F77_FUNC(dsytrs)("U", (int *)&m, (int *)&nrhs, a, (int *)&m, ipiv, x, (int *)&m, (int *)&info);
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dsytrs illegal in sba_Axb_BK()\n", -info);
@@ -838,11 +827,6 @@ double *a, *b, *work;
 			fprintf(stderr, "unknown error for dsytrs in sba_Axb_BK()\n");
 			return 0;
 		}
-	}
-
-	/* copy the result in x */
-	for(i=0; i<m; ++i){
-		x[i]=b[i];
 	}
 
 	return 1;
@@ -893,7 +877,7 @@ double *a, *work;
 #endif /* SBA_LS_SCARCE_MEMORY */
   }
   work_sz=nb*m;
-  tot_sz=ipiv_sz*sizeof(int) + (a_sz + work_sz)*sizeof(double); 
+  tot_sz=(a_sz + work_sz)*sizeof(double) + ipiv_sz*sizeof(int); /* should be arranged in that order for proper doubles alignment */
 
   if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
     if(buf) free(buf); /* free previously allocated memory */
@@ -906,9 +890,9 @@ double *a, *work;
     }
   }
 
-  ipiv=(int *)buf;
-  a=(double *)(ipiv + ipiv_sz);
+  a=buf;
   work=a+a_sz;
+  ipiv=(int *)(work+work_sz);
 
   /* store A (column major!) into a */
 	for(i=0; i<m; ++i)
@@ -1084,7 +1068,7 @@ double *a, *work;
   }
   work_sz=(nb!=-1)? nb*m : 1;
   work_sz=(work_sz>=m)? work_sz : m; /* ensure that work is at least m elements long, as required by dsytri */
-  tot_sz=ipiv_sz*sizeof(int) + (a_sz + work_sz)*sizeof(double);
+  tot_sz=(a_sz + work_sz)*sizeof(double) + ipiv_sz*sizeof(int); /* should be arranged in that order for proper doubles alignment */
 
   if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
     if(buf) free(buf); /* free previously allocated memory */
@@ -1097,9 +1081,9 @@ double *a, *work;
     }
   }
 
-  ipiv=(int *)buf;
-  a=(double *)(ipiv + ipiv_sz);
+  a=buf;
   work=a+a_sz;
+  ipiv=(int *)(work+work_sz);
 
   /* store A into a; A is assumed symmetric, hence no transposition is needed */
   for(i=0, j=a_sz; i<j; ++i)
@@ -1535,7 +1519,7 @@ double *a, *work;
 #endif /* SBA_LS_SCARCE_MEMORY */
   }
   work_sz=nb*m;
-  tot_sz=ipiv_sz*sizeof(int) + (a_sz + work_sz)*sizeof(double); 
+  tot_sz=(a_sz + work_sz)*sizeof(double) + ipiv_sz*sizeof(int); /* should be arranged in that order for proper doubles alignment */
 
   if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
     if(buf) free(buf); /* free previously allocated memory */
@@ -1548,9 +1532,9 @@ double *a, *work;
     }
   }
 
-  ipiv=(int *)buf;
-  a=(double *)(ipiv + ipiv_sz);
+  a=buf;
   work=a+a_sz;
+  ipiv=(int *)(work+work_sz);
 
   /* step 1: invert A */
   /* store A into a; A is assumed symmetric, hence no transposition is needed */

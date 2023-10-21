@@ -48,7 +48,8 @@ projac.c: projection function and Jacobian, to be compiled in
 ==================== COMPILING ====================
  - On a Linux/Unix system, typing "make" will build the MEX object.
 
- - Under Windows, use the provided Makefile as a basis for creating your own makefile.
+ - Under Windows, use the provided Makefile.w32 as a basis for creating
+   your own makefile.
 
 
 ==================== TESTING ====================

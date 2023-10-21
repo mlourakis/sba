@@ -8,7 +8,7 @@ ADD_EXECUTABLE(eucsbademo eucsbademo.c imgproj.c readparams.c eucsbademo.h readp
 IF(HAVE_F2C)
   TARGET_LINK_LIBRARIES(eucsbademo sba ${LAPACK_LIB} ${BLAS_LIB} ${F2C_LIB} m)
 ELSE(HAVE_F2C)
-  TARGET_LINK_LIBRARIES(eucsbademo sba ${LAPACK_LIB} ${BLAS_LIB} ${F77_LIB} ${I77_LIB} m)
+  TARGET_LINK_LIBRARIES(eucsbademo sba ${LAPACK_LIB} ${BLAS_LIB} m})
 ENDIF(HAVE_F2C)
 
 # make sure that the library is built before the demo

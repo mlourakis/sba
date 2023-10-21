@@ -47,7 +47,7 @@ extern void sba_str_chkjac(
 extern void sba_motstr_chkjac_x(
       void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
       void (*jacf)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
-      double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int mcon, int cnp, int pnp, int mnp, void *func_adata, void *jac_adata);
+      double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int ncon, int mcon, int cnp, int pnp, int mnp, void *func_adata, void *jac_adata);
 
 extern void sba_mot_chkjac_x(
       void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
@@ -57,7 +57,7 @@ extern void sba_mot_chkjac_x(
 extern void sba_str_chkjac_x(
       void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
       void (*jacf)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
-      double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int pnp, int mnp, void *func_adata, void *jac_adata);
+      double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, int ncon, int pnp, int mnp, void *func_adata, void *jac_adata);
 
 
 #ifdef __cplusplus

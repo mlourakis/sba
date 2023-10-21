@@ -2,7 +2,7 @@
 /////////////////////////////////////////////////////////////////////////////////
 //// 
 ////  Prototypes and definitions for sparse bundle adjustment
-////  Copyright (C) 2004-2008 Manolis Lourakis (lourakis at ics forth gr)
+////  Copyright (C) 2004-2009 Manolis Lourakis (lourakis at ics forth gr)
 ////  Institute of Computer Science, Foundation for Research & Technology - Hellas
 ////  Heraklion, Crete, Greece.
 ////
@@ -60,7 +60,7 @@ extern "C" {
 #define SBA_CG_NOPREC     0
 #define SBA_CG_JACOBI     1
 #define SBA_CG_SSOR       2
-#define SBA_VERSION       "1.5 (Jul. 2008)"
+#define SBA_VERSION       "1.6 (Aug. 2009)"
 
 
 /* Sparse matrix representation using Compressed Row Storage (CRS) format.
@@ -81,8 +81,8 @@ struct sba_crsm{
 
 /* simple drivers */
 extern int
-sba_motstr_levmar(const int n, const int m, const int mcon, char *vmask, double *p, const int cnp, const int pnp,
-           double *x, double *covx, const int mnp,
+sba_motstr_levmar(const int n, const int ncon, const int m, const int mcon, char *vmask,
+           double *p, const int cnp, const int pnp, double *x, double *covx, const int mnp,
            void (*proj)(int j, int i, double *aj, double *bi, double *xij, void *adata),
            void (*projac)(int j, int i, double *aj, double *bi, double *Aij, double *Bij, void *adata),
            void *adata, const int itmax, const int verbose, const double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
@@ -95,7 +95,7 @@ sba_mot_levmar(const int n, const int m, const int mcon, char *vmask, double *p,
            void *adata, const int itmax, const int verbose, const double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
 
 extern int
-sba_str_levmar(const int n, const int m, char *vmask, double *p, const int pnp,
+sba_str_levmar(const int n, const int ncon, const int m, char *vmask, double *p, const int pnp,
            double *x, double *covx, const int mnp,
            void (*proj)(int j, int i, double *bi, double *xij, void *adata),
            void (*projac)(int j, int i, double *bi, double *Bij, void *adata),
@@ -104,8 +104,8 @@ sba_str_levmar(const int n, const int m, char *vmask, double *p, const int pnp,
 
 /* expert drivers */
 extern int
-sba_motstr_levmar_x(const int n, const int m, const int mcon, char *vmask, double *p, const int cnp, const int pnp,
-           double *x, double *covx, const int mnp,
+sba_motstr_levmar_x(const int n, const int ncon, const int m, const int mcon, char *vmask, double *p,
+           const int cnp, const int pnp, double *x, double *covx, const int mnp,
            void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
            void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
            void *adata, const int itmax, const int verbose, const double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
@@ -118,7 +118,7 @@ sba_mot_levmar_x(const int n, const int m, const int mcon, char *vmask, double *
            void *adata, const int itmax, const int verbose, const double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
 
 extern int
-sba_str_levmar_x(const int n, const int m, char *vmask, double *p, const int pnp,
+sba_str_levmar_x(const int n, const int ncon, const int m, char *vmask, double *p, const int pnp,
            double *x, double *covx, const int mnp,
            void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
            void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
@@ -129,6 +129,7 @@ sba_str_levmar_x(const int n, const int m, char *vmask, double *p, const int pnp
 extern int sba_Axb_QR(double *A, double *B, double *x, int m, int iscolmaj);
 extern int sba_Axb_QRnoQ(double *A, double *B, double *x, int m, int iscolmaj);
 extern int sba_Axb_Chol(double *A, double *B, double *x, int m, int iscolmaj);
+extern int sba_Axb_LDLt(double *A, double *B, double *x, int m, int iscolmaj);
 extern int sba_Axb_LU(double *A, double *B, double *x, int m, int iscolmaj);
 extern int sba_Axb_SVD(double *A, double *B, double *x, int m, int iscolmaj);
 extern int sba_Axb_BK(double *A, double *B, double *x, int m, int iscolmaj);

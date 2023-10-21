@@ -24,7 +24,7 @@ $(INTFACESOBJ): $(INTFACESRCS)
 	$(MEX) $(MEXCFLAGS) $(INTFACESRCS) $(LIBS)
 
 projac.so: projac.c
-	gcc -fPIC -O3 -shared -o projac.so projac.c
+	gcc -Wall -fPIC -O3 -shared -o projac.so projac.c
 
 clean:
 	@rm -f $(INTFACESOBJ) projac.so
