@@ -24,6 +24,8 @@
 extern "C" {
 #endif
 
+#define SBA_APPEND_UNDERSCORE_SUFFIX // undef this for AIX
+
 #define SBA_MIN_DELTA     1E-06 // finite differentiation minimum delta
 #define SBA_DELTA_SCALE   1E-04 // finite differentiation delta scale
 
@@ -34,7 +36,7 @@ extern "C" {
 #define SBA_CG_NOPREC     0
 #define SBA_CG_JACOBI     1
 #define SBA_CG_SSOR       2
-#define SBA_VERSION       "1.2 (Nov. 2005)"
+#define SBA_VERSION       "1.3 (Jun. 2006)"
 
 
 /* Sparse matrix representation using Compressed Row Storage (CRS) format.

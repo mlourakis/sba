@@ -79,6 +79,13 @@ void *ptr;
   return ptr;
 }
 
+/* auxiliary routine for clearing an array of doubles */
+inline static void _dblzero(register double *arr, register int count)
+{
+  while(--count>=0)
+    *arr++=0.0;
+}
+
 /* auxiliary routine for computing the mean reprojection error; used for debugging */
 static double sba_mean_repr_error(int n, int mnp, double *x, double *hx, struct sba_crsm *idxij, int *rcidxs, int *rcsubs)
 {
@@ -398,7 +405,9 @@ double *pa, *pb, *jaca, *jacb, *ea, *eb, *dpa, *dpb; /* pointers into p, jac, ea
 /* submatrices sizes */
 int Asz, Bsz, Usz, Vsz,
     Wsz, Ysz, esz, easz, ebsz,
-    YWtsz, Wtdasz, Ssz;
+    YWtsz, Wtdasz, Sblsz;
+
+int Sdim; /* S matrix actual dimension */
 
 register double *ptr1, *ptr2, *ptr3, *ptr4, sum;
 struct sba_crsm idxij; /* sparse matrix containing the location of x_ij in x. This is also the location of A_ij 
@@ -446,7 +455,8 @@ void *jac_adata;
   easz=cnp; ebsz=pnp;
   YWtsz=cnp * cnp;
   Wtdasz=pnp;
-  Ssz=cnp * cnp;
+  Sblsz=cnp * cnp;
+  Sdim=mmcon * cnp;
 
   /* count total number of visible image points */
   for(i=nvis=0, jj=n*m; i<jj; ++i)
@@ -464,22 +474,22 @@ void *jac_adata;
   U=(double *)emalloc(m*Usz*sizeof(double));
   V=(double *)emalloc(n*Vsz*sizeof(double));
   V_1=(double *)emalloc(n*Vsz*sizeof(double));
-  e=(double *)emalloc(nvis*mnp*sizeof(double));
-  eab=(double *)emalloc((m*cnp+n*pnp)*sizeof(double));
+  e=(double *)emalloc(nobs*sizeof(double));
+  eab=(double *)emalloc(nvars*sizeof(double));
   E=(double *)emalloc(m*cnp*sizeof(double));
   W=(double *)emalloc(nvis*Wsz*sizeof(double));
   Y=(double *)emalloc(nvis*Ysz*sizeof(double));
   YWt=(double *)emalloc(YWtsz*sizeof(double));
-  S=(double *)emalloc(m*m*Ssz*sizeof(double));
-  dp=(double *)emalloc((m*cnp+n*pnp)*sizeof(double));
+  S=(double *)emalloc(m*m*Sblsz*sizeof(double));
+  dp=(double *)emalloc(nvars*sizeof(double));
   Wtda=(double *)emalloc(pnp*sizeof(double));
   rcidxs=(int *)emalloc(maxnm*sizeof(int));
   rcsubs=(int *)emalloc(maxnm*sizeof(int));
 
 
-  hx=(double *)emalloc(nvis*mnp*sizeof(double));
-  diagUV=(double *)emalloc((m*cnp+n*pnp)*sizeof(double));
-  pdp=(double *)emalloc((m*cnp+n*pnp)*sizeof(double));
+  hx=(double *)emalloc(nobs*sizeof(double));
+  diagUV=(double *)emalloc(nvars*sizeof(double));
+  pdp=(double *)emalloc(nvars*sizeof(double));
 
 
   /* set up auxiliary pointers */
@@ -511,7 +521,7 @@ void *jac_adata;
     fdj_data.pnp=pnp;
     fdj_data.mnp=mnp;
     fdj_data.hx=hx;
-    fdj_data.hxx=(double *)emalloc(nvis*mnp*sizeof(double));
+    fdj_data.hxx=(double *)emalloc(nobs*sizeof(double));
     fdj_data.func_rcidxs=(int *)emalloc(2*maxnm*sizeof(int));
     fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxnm;
     fdj_data.adata=adata;
@@ -544,11 +554,6 @@ void *jac_adata;
   for(itno=stop=0; itno<itmax && !stop; ++itno){
     /* Note that p, e and ||e||_2 have been updated at the previous iteration */
 
-    if(p_eL2<=eps3_sq){ /* error is small */
-      stop=5;
-      break;
-    }
-
     /* compute derivative submatrices A_ij, B_ij */
     (*fjac)(p, &idxij, rcidxs, rcsubs, jac, jac_adata); ++njev;
 
@@ -560,8 +565,8 @@ void *jac_adata;
     /* Also compute ea_j = \sum_i A_ij^T e_ij */ // \Sigma here!
     /* Recall that e_ij is mnp x 1
      */
-    memset(U, 0, m*Usz*sizeof(double)); /* clear all U_j */
-    memset(ea, 0, m*easz*sizeof(double)); /* clear all ea_j */
+    _dblzero(U, m*Usz); /* clear all U_j */
+    _dblzero(ea, m*easz); /* clear all ea_j */
     for(j=mcon; j<m; ++j){
       ptr1=U + j*Usz; // set ptr1 to point to U_j
       ptr2=ea + j*easz; // set ptr2 to point to ea_j
@@ -602,8 +607,8 @@ void *jac_adata;
     /* Also compute eb_i = \sum_j B_ij^T e_ij */ // \Sigma here!
     /* Recall that e_ij is mnp x 1
      */
-	  memset(V, 0, n*Vsz*sizeof(double)); /* clear all V_i */
-	  memset(eb, 0, n*ebsz*sizeof(double)); /* clear all eb_i */
+	  _dblzero(V, n*Vsz); /* clear all V_i */
+	  _dblzero(eb, n*ebsz); /* clear all eb_i */
     for(i=0; i<n; ++i){
       ptr1=V + i*Vsz; // set ptr1 to point to V_i
       ptr2=eb + i*ebsz; // set ptr2 to point to eb_i
@@ -639,7 +644,7 @@ void *jac_adata;
     /* compute W_ij =  A_ij^T B_ij */ // \Sigma here!
     /* Recall that A_ij is mnp x cnp and B_ij is mnp x pnp
      */
-    memset(W, 0, nvis*Wsz*sizeof(double)); /* clear all W_ij */
+    _dblzero(W, nvis*Wsz); /* clear all W_ij */
     for(i=0; i<n; ++i){
       nnz=sba_crsm_row_elmidxs(&idxij, i, rcidxs, rcsubs); /* find nonzero W_ij, j=0...m-1 */
       for(j=0; j<nnz; ++j){
@@ -733,7 +738,7 @@ if(!(itno%100)){
       /* compute Y_ij = W_ij (V*_i)^-1
        * Recall that W_ij is cnp x pnp and (V*_i) is pnp x pnp
        */
-      memset(Y, 0, nvis*Ysz*sizeof(double)); /* clear all Y_ij */
+      _dblzero(Y, nvis*Ysz); /* clear all Y_ij */
       for(i=0; i<n; ++i){
         /* set ptr3 to point to (V*_i)^-1 */
         ptr3=V_1 + i*Vsz;
@@ -755,15 +760,21 @@ if(!(itno%100)){
         }
       }
 
-      memset(E, 0, m*easz*sizeof(double)); /* clear all e_j */
+      _dblzero(E, m*easz); /* clear all e_j */
       /* compute the mmcon x mmcon block matrix S and e_j */
+
+      /* Note that S is symmetric, therefore its computation can be
+       * speeded up by computing only the upper part and then reusing
+       * it for the lower one.
+		   */
       for(j=mcon; j<m; ++j){
 		    nnz=sba_crsm_col_elmidxs(&idxij, j, rcidxs, rcsubs); /* find nonzero Y_ij, i=0...n-1 */
 
-        for(k=mcon; k<m; ++k){
+        /* compute the UPPER TRIANGULAR PART of S */
+        for(k=j; k<m; ++k){ // j>=mcon
           /* compute \sum_i Y_ij W_ik^T in YWt */
           /* Recall that Y_ij is cnp x pnp and W_ik is cnp x pnp */ 
-          memset(YWt, 0, YWtsz*sizeof(double)); /* clear YWt */
+          _dblzero(YWt, YWtsz); /* clear YWt */
 
           for(i=0; i<nnz; ++i){
             register double *pYWt;
@@ -786,6 +797,7 @@ if(!(itno%100)){
             for(ii=0; ii<cnp; ++ii){
               ptr3=ptr1+ii*pnp;
               pYWt=YWt+ii*cnp;
+
               for(jj=0; jj<cnp; ++jj){
                 ptr4=ptr2+jj*pnp;
                 for(l=0, sum=0.0; l<pnp; ++l)
@@ -797,10 +809,10 @@ if(!(itno%100)){
 
           ptr1=U + j*Usz; // set ptr1 to point to U_j
 		  
-		  /* since the linear system involving S is solved with lapack,
-		   * it is preferable to store S in column major (i.e. fortran)
-		   * order, so as to avoid unecessary transposing/copying
-		   */
+		      /* since the linear system involving S is solved with lapack,
+		       * it is preferable to store S in column major (i.e. fortran)
+		       * order, so as to avoid unecessary transposing/copying.
+           */
 #if MAT_STORAGE==COLUMN_MAJOR
           ptr2=S + (k-mcon)*mmcon*Usz + (j-mcon)*cnp; // set ptr2 to point to the beginning of block j,k in S
 #else
@@ -808,7 +820,7 @@ if(!(itno%100)){
 #endif
 		  
           if(j!=k){ /* Kronecker */
-            for(ii=0; ii<cnp; ++ii, ptr2+=mmcon*cnp)
+            for(ii=0; ii<cnp; ++ii, ptr2+=Sdim)
               for(jj=0; jj<cnp; ++jj)
                 ptr2[jj]=
 #if MAT_STORAGE==COLUMN_MAJOR
@@ -818,7 +830,7 @@ if(!(itno%100)){
 #endif
           }
           else{
-            for(ii=0; ii<cnp; ++ii, ptr2+=mmcon*cnp)
+            for(ii=0; ii<cnp; ++ii, ptr2+=Sdim)
               for(jj=0; jj<cnp; ++jj)
                 ptr2[jj]=
 #if MAT_STORAGE==COLUMN_MAJOR
@@ -827,6 +839,20 @@ if(!(itno%100)){
 				                ptr1[ii*cnp+jj] - YWt[ii*cnp+jj];
 #endif
           }
+        }
+
+        /* copy the LOWER TRIANGULAR PART of S from the upper one */
+        for(k=mcon; k<j; ++k){
+#if MAT_STORAGE==COLUMN_MAJOR
+          ptr1=S + (k-mcon)*mmcon*Usz + (j-mcon)*cnp; // set ptr1 to point to the beginning of block j,k in S
+          ptr2=S + (j-mcon)*mmcon*Usz + (k-mcon)*cnp; // set ptr2 to point to the beginning of block k,j in S
+#else
+          ptr1=S + (j-mcon)*mmcon*Usz + (k-mcon)*cnp; // set ptr1 to point to the beginning of block j,k in S
+          ptr2=S + (k-mcon)*mmcon*Usz + (j-mcon)*cnp; // set ptr2 to point to the beginning of block k,j in S
+#endif
+          for(ii=0; ii<cnp; ++ii, ptr1+=Sdim)
+            for(jj=0, ptr3=ptr2+ii; jj<cnp; ++jj, ptr3+=Sdim)
+              ptr1[jj]=*ptr3;
         }
 
         /* compute e_j=ea_j - \sum_i Y_ij eb_i */
@@ -854,9 +880,9 @@ if(!(itno%100)){
 
 #if 0
       if(verbose>1){ /* count the nonzeros in S */
-        for(i=ii=0; i<mmcon*cnp*mmcon*cnp; ++i)
+        for(i=ii=0; i<Sdim*Sdim; ++i)
           if(S[i]!=0.0) ++ii;
-        printf("\nS sparseness %10g\n", ((double)ii)/(mmcon*cnp*mmcon*cnp));
+        printf("\nS density %10g\n", ((double)ii)/(Sdim*Sdim));
 
       }
 #endif
@@ -866,14 +892,14 @@ if(!(itno%100)){
        * Note that if MAT_STORAGE==1 S is modified in the following call;
        * this is OK since S is recomputed for each iteration
        */
-	    issolved=sba_Axb_LU(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
-      //issolved=sba_Axb_Chol(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
-      //issolved=sba_Axb_QRnoQ(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
-      //issolved=sba_Axb_QR(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
-	    //issolved=sba_Axb_SVD(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, MAT_STORAGE); ++nlss;
-	    //issolved=sba_Axb_CG(S, E+mcon*cnp, dpa+mcon*cnp, mmcon*cnp, (3*mmcon*cnp)/2, 1E-10, SBA_CG_JACOBI, MAT_STORAGE); ++nlss;
+	    //issolved=sba_Axb_LU(S, E+mcon*cnp, dpa+mcon*cnp, Sdim, MAT_STORAGE); ++nlss;
+      issolved=sba_Axb_Chol(S, E+mcon*cnp, dpa+mcon*cnp, Sdim, MAT_STORAGE); ++nlss;
+      //issolved=sba_Axb_QRnoQ(S, E+mcon*cnp, dpa+mcon*cnp, Sdim, MAT_STORAGE); ++nlss;
+      //issolved=sba_Axb_QR(S, E+mcon*cnp, dpa+mcon*cnp, Sdim, MAT_STORAGE); ++nlss;
+	    //issolved=sba_Axb_SVD(S, E+mcon*cnp, dpa+mcon*cnp, Sdim, MAT_STORAGE); ++nlss;
+	    //issolved=sba_Axb_CG(S, E+mcon*cnp, dpa+mcon*cnp, Sdim, (3*Sdim)/2, 1E-10, SBA_CG_JACOBI, MAT_STORAGE); ++nlss;
 
-	    memset(dpa, 0, mcon*cnp*sizeof(double)); /* no change for the first mcon camera params */
+	    _dblzero(dpa, mcon*cnp); /* no change for the first mcon camera params */
 
       if(issolved){
 
@@ -883,7 +909,7 @@ if(!(itno%100)){
 
           /* compute \sum_j W_ij^T da_j */
           /* Recall that W_ij is cnp x pnp and da_j is cnp x 1 */
-          memset(Wtda, 0, Wtdasz*sizeof(double)); /* clear Wtda */
+          _dblzero(Wtda, Wtdasz); /* clear Wtda */
           nnz=sba_crsm_row_elmidxs(&idxij, i, rcidxs, rcsubs); /* find nonzero W_ij, j=0...m-1 */
           for(j=0; j<nnz; ++j){
             /* set ptr2 to point to W_ij, actual column number in rcsubs[j] */
@@ -895,8 +921,9 @@ if(!(itno%100)){
             ptr3=dpa + rcsubs[j]*cnp;
 
             for(ii=0; ii<pnp; ++ii){
+              ptr4=ptr2+ii;
               for(jj=0, sum=0.0; jj<cnp; ++jj)
-                sum+=ptr2[jj*pnp+ii]*ptr3[jj];
+                sum+=ptr4[jj*pnp]*ptr3[jj]; //ptr2[jj*pnp+ii]*ptr3[jj];
               Wtda[ii]+=sum;
             }
           }
@@ -996,6 +1023,8 @@ if(!(itno%100)){
           ptr1[j*pnp+j]=ptr2[j];
       }
     } /* inner loop */
+
+    if(p_eL2<=eps3_sq) stop=5; // error is small, force termination of outer loop
   }
 
   if(itno>=itmax) stop=3;
@@ -1204,16 +1233,16 @@ void *jac_adata;
   /* allocate work arrays */
   jac=(double *)emalloc(nvis*Asz*sizeof(double));
   U=(double *)emalloc(m*Usz*sizeof(double));
-  e=(double *)emalloc(nvis*mnp*sizeof(double));
-  ea=(double *)emalloc(m*cnp*sizeof(double));
-  dp=(double *)emalloc(m*cnp*sizeof(double));
+  e=(double *)emalloc(nobs*sizeof(double));
+  ea=(double *)emalloc(nvars*sizeof(double));
+  dp=(double *)emalloc(nvars*sizeof(double));
   rcidxs=(int *)emalloc(maxnm*sizeof(int));
   rcsubs=(int *)emalloc(maxnm*sizeof(int));
 
 
-  hx=(double *)emalloc(nvis*mnp*sizeof(double));
-  diagU=(double *)emalloc(m*cnp*sizeof(double));
-  pdp=(double *)emalloc(m*cnp*sizeof(double));
+  hx=(double *)emalloc(nobs*sizeof(double));
+  diagU=(double *)emalloc(nvars*sizeof(double));
+  pdp=(double *)emalloc(nvars*sizeof(double));
 
   /* allocate & fill up the idxij structure */
   sba_crsm_alloc(&idxij, n, m, nvis);
@@ -1235,7 +1264,7 @@ void *jac_adata;
     fdj_data.pnp=0;
     fdj_data.mnp=mnp;
     fdj_data.hx=hx;
-    fdj_data.hxx=(double *)emalloc(nvis*mnp*sizeof(double));
+    fdj_data.hxx=(double *)emalloc(nobs*sizeof(double));
     fdj_data.func_rcidxs=(int *)emalloc(2*maxnm*sizeof(int));
     fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxnm;
     fdj_data.adata=adata;
@@ -1268,11 +1297,6 @@ void *jac_adata;
   for(itno=stop=0; itno<itmax && !stop; ++itno){
     /* Note that p, e and ||e||_2 have been updated at the previous iteration */
 
-    if(p_eL2<=eps3_sq){ /* error is small */
-      stop=5;
-      break;
-    }
-
     /* compute derivative submatrices A_ij */
     (*fjac)(p, &idxij, rcidxs, rcsubs, jac, jac_adata); ++njev;
 
@@ -1284,8 +1308,8 @@ void *jac_adata;
     /* Also compute ea_j = \sum_i A_ij^T e_ij */ // \Sigma here!
     /* Recall that e_ij is mnp x 1
      */
-	  memset(U, 0, m*Usz*sizeof(double)); /* clear all U_j */
-	  memset(ea, 0, m*easz*sizeof(double)); /* clear all ea_j */
+	  _dblzero(U, m*Usz); /* clear all U_j */
+	  _dblzero(ea, m*easz); /* clear all ea_j */
     for(j=mcon; j<m; ++j){
       ptr1=U + j*Usz; // set ptr1 to point to U_j
       ptr2=ea + j*easz; // set ptr2 to point to ea_j
@@ -1368,7 +1392,7 @@ if(!(itno%100)){
       }
  
       /* solve the linear systems U_j da_j = ea_j to compute the da_j */
-      memset(dp, 0, mcon*cnp*sizeof(double)); /* no change for the first mcon camera params */
+      _dblzero(dp, mcon*cnp); /* no change for the first mcon camera params */
       for(j=nsolved=mcon; j<m; ++j){
 		    ptr1=U + j*Usz; // set ptr1 to point to U_j
 		    ptr2=ea + j*easz; // set ptr2 to point to ea_j
@@ -1460,6 +1484,8 @@ if(!(itno%100)){
           ptr1[i*cnp+i]=ptr2[i];
       }
     } /* inner loop */
+
+    if(p_eL2<=eps3_sq) stop=5; // error is small, force termination of outer loop
   }
 
   if(itno>=itmax) stop=3;
@@ -1651,16 +1677,16 @@ void *jac_adata;
   /* allocate work arrays */
   jac=(double *)emalloc(nvis*Bsz*sizeof(double));
   V=(double *)emalloc(n*Vsz*sizeof(double));
-  e=(double *)emalloc(nvis*mnp*sizeof(double));
-  eb=(double *)emalloc(n*pnp*sizeof(double));
-  dp=(double *)emalloc(n*pnp*sizeof(double));
+  e=(double *)emalloc(nobs*sizeof(double));
+  eb=(double *)emalloc(nvars*sizeof(double));
+  dp=(double *)emalloc(nvars*sizeof(double));
   rcidxs=(int *)emalloc(maxnm*sizeof(int));
   rcsubs=(int *)emalloc(maxnm*sizeof(int));
 
 
-  hx=(double *)emalloc(nvis*mnp*sizeof(double));
-  diagV=(double *)emalloc(n*pnp*sizeof(double));
-  pdp=(double *)emalloc(n*pnp*sizeof(double));
+  hx=(double *)emalloc(nobs*sizeof(double));
+  diagV=(double *)emalloc(nvars*sizeof(double));
+  pdp=(double *)emalloc(nvars*sizeof(double));
 
   /* allocate & fill up the idxij structure */
   sba_crsm_alloc(&idxij, n, m, nvis);
@@ -1682,7 +1708,7 @@ void *jac_adata;
     fdj_data.pnp=pnp;
     fdj_data.mnp=mnp;
     fdj_data.hx=hx;
-    fdj_data.hxx=(double *)emalloc(nvis*mnp*sizeof(double));
+    fdj_data.hxx=(double *)emalloc(nobs*sizeof(double));
     fdj_data.func_rcidxs=(int *)emalloc(2*maxnm*sizeof(int));
     fdj_data.func_rcsubs=fdj_data.func_rcidxs+maxnm;
     fdj_data.adata=adata;
@@ -1715,11 +1741,6 @@ void *jac_adata;
   for(itno=stop=0; itno<itmax && !stop; ++itno){
     /* Note that p, e and ||e||_2 have been updated at the previous iteration */
 
-    if(p_eL2<=eps3_sq){ /* error is small */
-      stop=5;
-      break;
-    }
-
     /* compute derivative submatrices B_ij */
     (*fjac)(p, &idxij, rcidxs, rcsubs, jac, jac_adata); ++njev;
 
@@ -1731,8 +1752,8 @@ void *jac_adata;
     /* Also compute eb_i = \sum_j B_ij^T e_ij */ // \Sigma here!
     /* Recall that e_ij is mnp x 1
      */
-	  memset(V, 0, n*Vsz*sizeof(double)); /* clear all V_i */
-	  memset(eb, 0, n*ebsz*sizeof(double)); /* clear all eb_i */
+	  _dblzero(V, n*Vsz); /* clear all V_i */
+	  _dblzero(eb, n*ebsz); /* clear all eb_i */
     for(i=0; i<n; ++i){
       ptr1=V + i*Vsz; // set ptr1 to point to V_i
       ptr2=eb + i*ebsz; // set ptr2 to point to eb_i
@@ -1906,6 +1927,8 @@ if(!(itno%100)){
           ptr1[j*pnp+j]=ptr2[j];
       }
     } /* inner loop */
+
+    if(p_eL2<=eps3_sq) stop=5; // error is small, force termination of outer loop
   }
 
   if(itno>=itmax) stop=3;

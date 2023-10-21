@@ -206,7 +206,7 @@ FILE *fpc, *fpp;
     fprintf(stderr, "memory allocation failed in readInitialSBAEstimate()\n");
     exit(1);
   }
-  *vmask=(char *)malloc(*n3Dpts * *ncams * sizeof(double));
+  *vmask=(char *)malloc(*n3Dpts * *ncams * sizeof(char));
   if(*vmask==NULL){
     fprintf(stderr, "memory allocation failed in readInitialSBAEstimate()\n");
     exit(1);

@@ -32,40 +32,47 @@
 
 #include "sba.h"
 
+#ifdef SBA_APPEND_UNDERSCORE_SUFFIX
+#define F77_FUNC(func)    func ## _
+#else
+#define F77_FUNC(func)    func 
+#endif /* SBA_APPEND_UNDERSCORE_SUFFIX */
+
+
 /* declarations of LAPACK routines employed */
 
 /* QR decomposition */
-extern int dgeqrf_(int *m, int *n, double *a, int *lda, double *tau, double *work, int *lwork, int *info);
-extern int dorgqr_(int *m, int *n, int *k, double *a, int *lda, double *tau, double *work, int *lwork, int *info);
+extern int F77_FUNC(dgeqrf)(int *m, int *n, double *a, int *lda, double *tau, double *work, int *lwork, int *info);
+extern int F77_FUNC(dorgqr)(int *m, int *n, int *k, double *a, int *lda, double *tau, double *work, int *lwork, int *info);
 
 /* solution of triangular system */
-extern int dtrtrs_(char *uplo, char *trans, char *diag, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb, int *info);
+extern int F77_FUNC(dtrtrs)(char *uplo, char *trans, char *diag, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb, int *info);
 
 /* cholesky decomposition, matrix inversion */
-extern int dpotf2_(char *uplo, int *n, double *a, int *lda, int *info);
-extern int dpotrf_(char *uplo, int *n, double *a, int *lda, int *info); /* block version of dpotf2 */
-extern int dpotri_(char *uplo, int *n, double *a, int *lda, int *info);
+extern int F77_FUNC(dpotf2)(char *uplo, int *n, double *a, int *lda, int *info);
+extern int F77_FUNC(dpotrf)(char *uplo, int *n, double *a, int *lda, int *info); /* block version of dpotf2 */
+extern int F77_FUNC(dpotri)(char *uplo, int *n, double *a, int *lda, int *info);
 
 /* LU decomposition, linear system solution and matrix inversion */
-extern int dgetrf_(int *m, int *n, double *a, int *lda, int *ipiv, int *info);
-extern int dgetrs_(char *trans, int *n, int *nrhs, double *a, int *lda, int *ipiv, double *b, int *ldb, int *info);
-extern int dgetri_(int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info);
+extern int F77_FUNC(dgetrf)(int *m, int *n, double *a, int *lda, int *ipiv, int *info);
+extern int F77_FUNC(dgetrs)(char *trans, int *n, int *nrhs, double *a, int *lda, int *ipiv, double *b, int *ldb, int *info);
+extern int F77_FUNC(dgetri)(int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info);
 
 /* SVD */
-extern int dgesvd_(char *jobu, char *jobvt, int *m, int *n,
+extern int F77_FUNC(dgesvd)(char *jobu, char *jobvt, int *m, int *n,
            double *a, int *lda, double *s, double *u, int *ldu,
            double *vt, int *ldvt, double *work, int *lwork,
            int *info);
 
-/* lapack 3.0 routine, faster than dgesvd_() */
-extern int dgesdd_(char *jobz, int *m, int *n, double *a, int *lda,
+/* lapack 3.0 routine, faster than dgesvd() */
+extern int F77_FUNC(dgesdd)(char *jobz, int *m, int *n, double *a, int *lda,
            double *s, double *u, int *ldu, double *vt, int *ldvt,
            double *work, int *lwork, int *iwork, int *info);
 
 
 /* Bunch-Kaufman factorization of a real symmetric matrix A and solution of linear systems */
-extern int dsytrf_(char *uplo, int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info);
-extern int dsytrs_(char *uplo, int *n, int *nrhs, double *a, int *lda, int *ipiv, double *b, int *ldb, int *info);
+extern int F77_FUNC(dsytrf)(char *uplo, int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info);
+extern int F77_FUNC(dsytrs)(char *uplo, int *n, int *nrhs, double *a, int *lda, int *ipiv, double *b, int *ldb, int *info);
 
 
 /*
@@ -130,7 +137,7 @@ register double sum;
     work=tau+tau_sz;
 
   /* QR decomposition of A */
-  dgeqrf_((int *)&m, (int *)&m, a, (int *)&m, tau, work, (int *)&worksz, (int *)&info);
+  F77_FUNC(dgeqrf)((int *)&m, (int *)&m, a, (int *)&m, tau, work, (int *)&worksz, (int *)&info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -148,7 +155,7 @@ register double sum;
     r[i]=a[i];
 
   /* compute Q using the elementary reflectors computed by the above decomposition */
-  dorgqr_((int *)&m, (int *)&m, (int *)&m, a, (int *)&m, tau, work, (int *)&worksz, (int *)&info);
+  F77_FUNC(dorgqr)((int *)&m, (int *)&m, (int *)&m, a, (int *)&m, tau, work, (int *)&worksz, (int *)&info);
   if(info!=0){
     if(info<0){
       fprintf(stderr, "LAPACK error: illegal value for argument %d of dorgqr in sba_Axb_QR()\n", -info);
@@ -168,7 +175,7 @@ register double sum;
   }
 
   /* solve the linear system R x = Q^t b */
-  dtrtrs_("U", "N", "N", (int *)&m, (int *)&nrhs, r, (int *)&m, qtb, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, r, (int *)&m, qtb, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -257,7 +264,7 @@ register double sum;
   }
 
   /* QR decomposition of A */
-  dgeqrf_((int *)&m, (int *)&m, a, (int *)&m, tau, work, (int *)&worksz, (int *)&info);
+  F77_FUNC(dgeqrf)((int *)&m, (int *)&m, a, (int *)&m, tau, work, (int *)&worksz, (int *)&info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -273,7 +280,7 @@ register double sum;
   /* R is stored in the upper triangular part of a */
 
   /* solve the linear system R^T y = A^t b */
-  dtrtrs_("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, atb, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, atb, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -287,7 +294,7 @@ register double sum;
   }
 
   /* solve the linear system R x = y */
-  dtrtrs_("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, atb, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, atb, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -370,8 +377,8 @@ int info, nrhs=1;
     }
 
   /* Cholesky decomposition of A */
-  //dpotf2_("U", (int *)&m, a, (int *)&m, (int *)&info);
-  dpotrf_("U", (int *)&m, a, (int *)&m, (int *)&info);
+  //F77_FUNC(dpotf2)("U", (int *)&m, a, (int *)&m, (int *)&info);
+  F77_FUNC(dpotrf)("U", (int *)&m, a, (int *)&m, (int *)&info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -385,7 +392,7 @@ int info, nrhs=1;
   }
 
   /* solve the linear system U^T y = b */
-  dtrtrs_("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "T", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -399,7 +406,7 @@ int info, nrhs=1;
   }
 
   /* solve the linear system U x = y */
-  dtrtrs_("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
+  F77_FUNC(dtrtrs)("U", "N", "N", (int *)&m, (int *)&nrhs, a, (int *)&m, b, (int *)&m, &info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -484,7 +491,7 @@ double *a, *b;
     }
 
   /* LU decomposition for A */
-	dgetrf_((int *)&m, (int *)&m, a, (int *)&m, ipiv, (int *)&info);  
+	F77_FUNC(dgetrf)((int *)&m, (int *)&m, a, (int *)&m, ipiv, (int *)&info);  
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dgetrf illegal in sba_Axb_LU()\n", -info);
@@ -497,7 +504,7 @@ double *a, *b;
 	}
 
   /* solve the system with the computed LU */
-  dgetrs_("N", (int *)&m, (int *)&nrhs, a, (int *)&m, ipiv, b, (int *)&m, (int *)&info);
+  F77_FUNC(dgetrs)("N", (int *)&m, (int *)&nrhs, a, (int *)&m, ipiv, b, (int *)&m, (int *)&info);
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dgetrs illegal in sba_Axb_LU()\n", -info);
@@ -550,8 +557,11 @@ int info, rank, worksz, *iwork, iworksz;
    
   /* calculate required memory size */
   worksz=-1; // workspace query. Keep in mind that dgesdd requires more memory than dgesvd
-  dgesdd_("A", (int *)&m, (int *)&m, NULL, (int *)&m, NULL, NULL, (int *)&m, NULL, (int *)&m,
-          (double *)&thresh, (int *)&worksz, NULL, &info); // returns optimal work size in thresh
+  /* note that optimal work size is returned in thresh */
+  F77_FUNC(dgesdd)("A", (int *)&m, (int *)&m, NULL, (int *)&m, NULL, NULL, (int *)&m, NULL, (int *)&m,
+          (double *)&thresh, (int *)&worksz, NULL, &info);
+  /* F77_FUNC(dgesvd)("A", "A", (int *)&m, (int *)&m, NULL, (int *)&m, NULL, NULL, (int *)&m, NULL, (int *)&m,
+          (double *)&thresh, (int *)&worksz, &info); */
   worksz=(int)thresh;
   iworksz=8*m;
   a_sz=(!iscolmaj)? m*m : 0;
@@ -588,8 +598,8 @@ int info, rank, worksz, *iwork, iworksz;
   work=vt+vt_sz;
 
   /* SVD decomposition of A */
-  dgesdd_("A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, iwork, &info);
-  //dgesvd_("A", "A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, &info);
+  F77_FUNC(dgesdd)("A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, iwork, &info);
+  //F77_FUNC(dgesvd)("A", "A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, &info);
 
   /* error treatment */
   if(info!=0){
@@ -700,7 +710,7 @@ double *a, *b, *work;
     }
 
   /* factorization for A */
-	dsytrf_("U", (int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
+	F77_FUNC(dsytrf)("U", (int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dsytrf illegal in sba_Axb_BK()\n", -info);
@@ -713,7 +723,7 @@ double *a, *b, *work;
 	}
 
   /* solve the system with the computed factorization */
-  dsytrs_("U", (int *)&m, (int *)&nrhs, a, (int *)&m, ipiv, b, (int *)&m, (int *)&info);
+  F77_FUNC(dsytrs)("U", (int *)&m, (int *)&nrhs, a, (int *)&m, ipiv, b, (int *)&m, (int *)&info);
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dsytrs illegal in sba_Axb_BK()\n", -info);
@@ -781,7 +791,7 @@ double *a, *work;
 			a[i+j*m]=A[i*m+j];
 
   /* LU decomposition for A */
-	dgetrf_((int *)&m, (int *)&m, a, (int *)&m, ipiv, (int *)&info);  
+	F77_FUNC(dgetrf)((int *)&m, (int *)&m, a, (int *)&m, ipiv, (int *)&info);  
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dgetrf illegal in sba_mat_invert_LU()\n", -info);
@@ -794,7 +804,7 @@ double *a, *work;
 	}
 
   /* (A)^{-1} from LU */
-	dgetri_((int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
+	F77_FUNC(dgetri)((int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dgetri illegal in sba_mat_invert_LU()\n", -info);
@@ -858,7 +868,7 @@ double *a;
 			a[i+j*m]=A[i*m+j];
 
   /* Cholesky factorization for A */
-  dpotrf_("L", (int *)&m, a, (int *)&m, (int *)&info);
+  F77_FUNC(dpotrf)("L", (int *)&m, a, (int *)&m, (int *)&info);
   /* error treatment */
   if(info!=0){
     if(info<0){
@@ -872,7 +882,7 @@ double *a;
   }
 
   /* (A)^{-1} from Cholesky */
-  dpotri_("L", (int *)&m, a, (int *)&m, (int *)&info);
+  F77_FUNC(dpotri)("L", (int *)&m, a, (int *)&m, (int *)&info);
 	if(info!=0){
 		if(info<0){
 			fprintf(stderr, "argument %d of dpotri illegal in sba_mat_invert_Chol()\n", -info);
