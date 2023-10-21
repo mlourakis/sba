@@ -78,7 +78,7 @@ double n[2];
  * and "t", "jacmRT" is the jacobian of its predicted image projection with
  * regard to "qr", "t". "jacmS" is the jacobian of "M"'s predicted projection
  * with regard to "M". "a" is the camera intrisic calibration matrix.
- * "jacmS" can be NULL, in which case only "jacmRT" is computed
+ * Either "jacmRT" or "jacmS" can be NULL, in which case they are not computed
  */
 void calcImgProjJacRTS(a,qr,t,M,jacmRT,jacmS)
 double a[9];
@@ -265,46 +265,50 @@ double jacmS[2][3];
     t114 = t95*t95;
     t115 = 1/t114;
     t116 = (t1*(-t12*t24+t33*t28-t40*t24+t48*t24+t[0])+t53*t110+t71*t95)*t115;
-    jacmRT[0][0] = (t1*(2.0*t12*t21+t29-2.0*t30*t28+t34-t35+t42+t43-t50)+t53*
-t69+t71*t87)*t96-t116*t87;
     t118 = a[IDX3x3_22];
     t120 = a[IDX3x3_23];
     t127 = (t118*t110+t120*t95)*t115;
-    jacmRT[1][0] = (t118*t69+t120*t87)*t96-t127*t87;
-    t129 = t4*t24;
-    t130 = t11*t24;
-    t137 = t10*t24;
-    t138 = t20*t2;
-    t140 = 2.0*t40*t138;
-    t141 = t7*t24;
-    t143 = 2.0*t48*t138;
-    t147 = 2.0*t54*t138;
-    t153 = t79+t147-t86-t78-t83-t75+2.0*t47*t15*t20-2.0*t66*t138;
-    t156 = 2.0*t72*t138;
-    t162 = t65+t156-t64+t60+2.0*t80*t138-t61+t57-2.0*t39*t15*t20;
-    jacmRT[0][1] = (t1*(t129-t130+2.0*t11*t15*t20-2.0*t21*t28*t2+t137+t140+t141
--t143)+t53*t153+t71*t162)*t96-t116*t162;
-    jacmRT[1][1] = (t118*t153+t120*t162)*t96-t127*t162;
-    t172 = t20*t5;
-    t187 = 2.0*t66*t172;
-    t188 = t141-t130+2.0*t11*t16*t20-2.0*t21*t39*t5+t129+t143+t137-t187;
-    t191 = 2.0*t72*t172;
-    t197 = t35+t191-t50-t34-t43-t29+2.0*t28*t16*t20-2.0*t84*t172;
-    jacmRT[0][2] = (t1*(t83+t147-t82+t78+2.0*t40*t172-t79+t75-2.0*t47*t16*t20)+
-t53*t188+t71*t197)*t96-t116*t197;
-    jacmRT[1][2] = (t118*t188+t120*t197)*t96-t127*t197;
-    t210 = t20*t8;
-    t220 = t43+t191-t42+t34+2.0*t62*t210-t35+t29-2.0*t28*t17*t20;
-    t228 = t137-t130+2.0*t11*t17*t20-2.0*t21*t47*t8+t141+t187+t129-t140;
-    jacmRT[0][3] = (t1*(t61+t156-t68-t60-t65-t57+2.0*t39*t17*t20-2.0*t48*t210)+
-t53*t220+t71*t228)*t96-t116*t228;
-    jacmRT[1][3] = (t118*t220+t120*t228)*t96-t127*t228;
-    jacmRT[0][4] = t1*t96;
-    jacmRT[1][4] = 0.0;
-    jacmRT[0][5] = t53*t96;
-    jacmRT[1][5] = t96*t118;
-    jacmRT[0][6] = t71*t96-t116;
-    jacmRT[1][6] = t120*t96-t127;
+
+    if(jacmRT){
+      jacmRT[0][0] = (t1*(2.0*t12*t21+t29-2.0*t30*t28+t34-t35+t42+t43-t50)+t53*
+    t69+t71*t87)*t96-t116*t87;
+      jacmRT[1][0] = (t118*t69+t120*t87)*t96-t127*t87;
+
+      t129 = t4*t24;
+      t130 = t11*t24;
+      t137 = t10*t24;
+      t138 = t20*t2;
+      t140 = 2.0*t40*t138;
+      t141 = t7*t24;
+      t143 = 2.0*t48*t138;
+      t147 = 2.0*t54*t138;
+      t153 = t79+t147-t86-t78-t83-t75+2.0*t47*t15*t20-2.0*t66*t138;
+      t156 = 2.0*t72*t138;
+      t162 = t65+t156-t64+t60+2.0*t80*t138-t61+t57-2.0*t39*t15*t20;
+      jacmRT[0][1] = (t1*(t129-t130+2.0*t11*t15*t20-2.0*t21*t28*t2+t137+t140+t141
+    -t143)+t53*t153+t71*t162)*t96-t116*t162;
+      jacmRT[1][1] = (t118*t153+t120*t162)*t96-t127*t162;
+      t172 = t20*t5;
+      t187 = 2.0*t66*t172;
+      t188 = t141-t130+2.0*t11*t16*t20-2.0*t21*t39*t5+t129+t143+t137-t187;
+      t191 = 2.0*t72*t172;
+      t197 = t35+t191-t50-t34-t43-t29+2.0*t28*t16*t20-2.0*t84*t172;
+      jacmRT[0][2] = (t1*(t83+t147-t82+t78+2.0*t40*t172-t79+t75-2.0*t47*t16*t20)+
+    t53*t188+t71*t197)*t96-t116*t197;
+      jacmRT[1][2] = (t118*t188+t120*t197)*t96-t127*t197;
+      t210 = t20*t8;
+      t220 = t43+t191-t42+t34+2.0*t62*t210-t35+t29-2.0*t28*t17*t20;
+      t228 = t137-t130+2.0*t11*t17*t20-2.0*t21*t47*t8+t141+t187+t129-t140;
+      jacmRT[0][3] = (t1*(t61+t156-t68-t60-t65-t57+2.0*t39*t17*t20-2.0*t48*t210)+
+    t53*t220+t71*t228)*t96-t116*t228;
+      jacmRT[1][3] = (t118*t220+t120*t228)*t96-t127*t228;
+      jacmRT[0][4] = t1*t96;
+      jacmRT[1][4] = 0.0;
+      jacmRT[0][5] = t53*t96;
+      jacmRT[1][5] = t96*t118;
+      jacmRT[0][6] = t71*t96-t116;
+      jacmRT[1][6] = t120*t96-t127;
+    }
 
     if(jacmS){
       t240 = t15*t24;

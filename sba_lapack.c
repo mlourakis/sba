@@ -21,6 +21,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
+
+/* inline */
+#ifdef _MSC_VER
+#define inline __inline //MSVC
+#elif !defined(__GNUC__)
+#define inline //other than MSVC, GCC: define empty
+#endif
 
 #include "sba.h"
 
@@ -33,9 +41,10 @@ extern int dorgqr_(int *m, int *n, int *k, double *a, int *lda, double *tau, dou
 /* solution of triangular system */
 extern int dtrtrs_(char *uplo, char *trans, char *diag, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb, int *info);
 
-/* cholesky decomposition */
+/* cholesky decomposition, matrix inversion */
 extern int dpotf2_(char *uplo, int *n, double *a, int *lda, int *info);
 extern int dpotrf_(char *uplo, int *n, double *a, int *lda, int *info); /* block version of dpotf2 */
+extern int dpotri_(char *uplo, int *n, double *a, int *lda, int *info);
 
 /* LU decomposition, linear system solution and matrix inversion */
 extern int dgetrf_(int *m, int *n, double *a, int *lda, int *ipiv, int *info);
@@ -66,7 +75,7 @@ extern int dsytrs_(char *uplo, int *n, int *nrhs, double *a, int *lda, int *ipiv
  * If A=Q R with Q orthogonal and R upper triangular, the linear system becomes
  * Q R x = b or R x = Q^T b.
  *
- * A is mxn, b is mx1. Argument iscolmaj specifies whether A is
+ * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
  * this function modifies A!
  *
@@ -188,7 +197,7 @@ register double sum;
  * This amounts to solving R^T y = A^T b for y and then R x = y for x
  * Note that Q does not need to be explicitly computed
  *
- * A is mxn, b is mx1. Argument iscolmaj specifies whether A is
+ * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
  * this function modifies A!
  *
@@ -301,13 +310,13 @@ register double sum;
 /*
  * This function returns the solution of Ax=b
  *
- * The function assumes that A is symmetric & postive definite and employs
+ * The function assumes that A is symmetric & positive definite and employs
  * the Cholesky decomposition:
  * If A=U^T U with U upper triangular, the system to be solved becomes
  * (U^T U) x = b
  * This amount to solving U^T y = b for y and then U x = y for x
  *
- * A is mxn, b is mx1. Argument iscolmaj specifies whether A is
+ * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
  * this function modifies A and B!
  *
@@ -361,15 +370,16 @@ int info, nrhs=1;
     }
 
   /* Cholesky decomposition of A */
-  dpotf2_("U", (int *)&m, a, (int *)&m, (int *)&info);
+  //dpotf2_("U", (int *)&m, a, (int *)&m, (int *)&info);
+  dpotrf_("U", (int *)&m, a, (int *)&m, (int *)&info);
   /* error treatment */
   if(info!=0){
     if(info<0){
-      fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotf2 in sba_Axb_Chol()\n", -info);
+      fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotf2/dpotrf in sba_Axb_Chol()\n", -info);
       exit(1);
     }
     else{
-      fprintf(stderr, "LAPACK error: the leading minor of order %d is not positive definite,\nthe factorization could not be completed for dpotf2 in sba_Axb_Chol()\n", info);
+      fprintf(stderr, "LAPACK error: the leading minor of order %d is not positive definite,\nthe factorization could not be completed for dpotf2/dpotrf in sba_Axb_Chol()\n", info);
       return 0;
     }
   }
@@ -417,7 +427,7 @@ int info, nrhs=1;
  * amounts to solving
  * L y = b, U x = y
  *
- * A is mxn, b is mx1. Argument iscolmaj specifies whether A is
+ * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
  * this function modifies A and B!
  *
@@ -515,7 +525,7 @@ double *a, *b;
  * (U D V^T) x = b or x=V D^{-1} U^T b
  * Note that V D^{-1} U^T is the pseudoinverse A^+
  *
- * A is mxn, b is mx1. Argument iscolmaj specifies whether A is
+ * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
  * this function modifies A!
  *
@@ -539,7 +549,10 @@ register double sum;
 int info, rank, worksz, *iwork, iworksz;
    
   /* calculate required memory size */
-  worksz=16*m; /* more than needed */
+  worksz=-1; // workspace query. Keep in mind that dgesdd requires more memory than dgesvd
+  dgesdd_("A", (int *)&m, (int *)&m, NULL, (int *)&m, NULL, NULL, (int *)&m, NULL, (int *)&m,
+          (double *)&thresh, (int *)&worksz, NULL, &info); // returns optimal work size in thresh
+  worksz=(int)thresh;
   iworksz=8*m;
   a_sz=(!iscolmaj)? m*m : 0;
   u_sz=m*m; s_sz=m; vt_sz=m*m;
@@ -575,8 +588,8 @@ int info, rank, worksz, *iwork, iworksz;
   work=vt+vt_sz;
 
   /* SVD decomposition of A */
-  dgesvd_("A", "A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, &info);
-  //dgesdd_("A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, iwork, &info);
+  dgesdd_("A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, iwork, &info);
+  //dgesvd_("A", "A", (int *)&m, (int *)&m, a, (int *)&m, s, u, (int *)&m, vt, (int *)&m, work, (int *)&worksz, &info);
 
   /* error treatment */
   if(info!=0){
@@ -592,9 +605,11 @@ int info, rank, worksz, *iwork, iworksz;
   }
 
   if(eps<0.0){
-    /* compute machine epsilon */
-    for(eps=1.0; eps+1.0!=1.0; eps*=0.5)
-                    ;
+    double aux;
+
+    /* compute machine epsilon. DBL_EPSILON should do also */
+    for(eps=1.0; aux=eps+1.0, aux-1.0>0.0; eps*=0.5)
+                              ;
     eps*=2.0;
   }
 
@@ -625,7 +640,7 @@ int info, rank, worksz, *iwork, iworksz;
  * A is factored as U*D*U^T where U is upper triangular and
  * D symmetric and block diagonal
  *
- * A is mxn, b is mx1. Argument iscolmaj specifies whether A is
+ * A is mxm, b is mx1. Argument iscolmaj specifies whether A is
  * stored in column or row major order. Note that if iscolmaj==1
  * this function modifies A and B!
  *
@@ -729,7 +744,7 @@ double *a, *b, *work;
  * dimensions. To avoid repetitive malloc's and free's, allocated memory is
  * retained between calls and free'd-malloc'ed when not of the appropriate size.
  */
-int sba_mat_invert(double *A, double *B, int m)
+int sba_mat_invert_LU(double *A, double *B, int m)
 {
 static double *buf=NULL;
 static int buf_sz=0;
@@ -751,7 +766,7 @@ double *a, *work;
       buf_sz=tot_sz;
       buf=(double *)malloc(buf_sz);
       if(!buf){
-        fprintf(stderr, "memory allocation in sba_mat_invert() failed!\n");
+        fprintf(stderr, "memory allocation in sba_mat_invert_LU() failed!\n");
         exit(1);
       }
     }
@@ -769,11 +784,11 @@ double *a, *work;
 	dgetrf_((int *)&m, (int *)&m, a, (int *)&m, ipiv, (int *)&info);  
 	if(info!=0){
 		if(info<0){
-			fprintf(stderr, "argument %d of dgetrf illegal in sba_mat_invert()\n", -info);
+			fprintf(stderr, "argument %d of dgetrf illegal in sba_mat_invert_LU()\n", -info);
 			exit(1);
 		}
 		else{
-			fprintf(stderr, "singular matrix A for dgetrf in sba_mat_invert()\n");
+			fprintf(stderr, "singular matrix A for dgetrf in sba_mat_invert_LU()\n");
 			return 0;
 		}
 	}
@@ -782,11 +797,11 @@ double *a, *work;
 	dgetri_((int *)&m, a, (int *)&m, ipiv, work, (int *)&work_sz, (int *)&info);
 	if(info!=0){
 		if(info<0){
-			fprintf(stderr, "argument %d of dgetri illegal in sba_mat_invert()\n", -info);
+			fprintf(stderr, "argument %d of dgetri illegal in sba_mat_invert_LU()\n", -info);
 			exit(1);
 		}
 		else{
-			fprintf(stderr, "singular matrix A for dgetri in sba_mat_invert()\n");
+			fprintf(stderr, "singular matrix A for dgetri in sba_mat_invert_LU()\n");
 			return 0;
 		}
 	}
@@ -797,4 +812,420 @@ double *a, *work;
       B[i*m+j]=a[i+j*m];
 
 	return 1;
+}
+
+/*
+ * This function computes the inverse of a square symmetric positive definite 
+ * matrix A into B using Cholesky factorization
+ *
+ * The function returns 0 in case of error (e.g. A is not positive definite or singular),
+ * 1 if successfull
+ *
+ * This function is often called repetitively to solve problems of identical
+ * dimensions. To avoid repetitive malloc's and free's, allocated memory is
+ * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ */
+int sba_mat_invert_Chol(double *A, double *B, int m)
+{
+static double *buf=NULL;
+static int buf_sz=0;
+
+int a_sz, tot_sz;
+register int i, j;
+int info;
+double *a;
+   
+    /* calculate required memory size */
+    a_sz=m*m;
+    tot_sz=a_sz; 
+
+    if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
+      if(buf) free(buf); /* free previously allocated memory */
+
+      buf_sz=tot_sz;
+      buf=(double *)malloc(buf_sz*sizeof(double));
+      if(!buf){
+        fprintf(stderr, "memory allocation in sba_mat_invert_Chol() failed!\n");
+        exit(1);
+      }
+    }
+
+    a=(double *)buf;
+
+  /* store A (column major!) into a */
+	for(i=0; i<m; i++)
+		for(j=0; j<m; j++)
+			a[i+j*m]=A[i*m+j];
+
+  /* Cholesky factorization for A */
+  dpotrf_("L", (int *)&m, a, (int *)&m, (int *)&info);
+  /* error treatment */
+  if(info!=0){
+    if(info<0){
+      fprintf(stderr, "LAPACK error: illegal value for argument %d of dpotrf in sba_mat_invert_Chol()\n", -info);
+      exit(1);
+    }
+    else{
+      fprintf(stderr, "LAPACK error: the leading minor of order %d is not positive definite,\nthe factorization could not be completed for dpotrf in sba_mat_invert_Chol()\n", info);
+      return 0;
+    }
+  }
+
+  /* (A)^{-1} from Cholesky */
+  dpotri_("L", (int *)&m, a, (int *)&m, (int *)&info);
+	if(info!=0){
+		if(info<0){
+			fprintf(stderr, "argument %d of dpotri illegal in sba_mat_invert_Chol()\n", -info);
+			exit(1);
+		}
+		else{
+			fprintf(stderr, "the (%d, %d) element of the factor U or L is zero, singular matrix A for dpotri in sba_mat_invert_Chol()\n", info, info);
+			return 0;
+		}
+	}
+
+	/* store (A)^{-1} in B. The lower triangle of the symmetric A^{-1} is in the lower triangle of a */
+	for(i=0; i<m; i++)
+		for(j=0; j<=i; j++)
+      B[i*m+j]=B[j*m+i]=a[i+j*m];
+
+	return 1;
+}
+
+
+#define __CG_LINALG_BLOCKSIZE           8
+
+/* Dot product of two vectors x and y using loop unrolling and blocking.
+ * see http://www.abarnett.demon.co.uk/tutorial.html
+ */
+
+inline static double dprod(int n, double *x, double *y)
+{ 
+register int i, j1, j2, j3, j4, j5, j6, j7; 
+int blockn;
+register double sum0=0.0, sum1=0.0, sum2=0.0, sum3=0.0,
+                sum4=0.0, sum5=0.0, sum6=0.0, sum7=0.0;
+
+  /* n may not be divisible by __CG_LINALG_BLOCKSIZE, 
+  * go as near as we can first, then tidy up.
+  */ 
+  blockn = (n / __CG_LINALG_BLOCKSIZE) * __CG_LINALG_BLOCKSIZE; 
+
+  /* unroll the loop in blocks of `__CG_LINALG_BLOCKSIZE' */ 
+  for(i=0; i<blockn; i+=__CG_LINALG_BLOCKSIZE){
+            sum0+=x[i]*y[i];
+    j1=i+1; sum1+=x[j1]*y[j1];
+    j2=i+2; sum2+=x[j2]*y[j2];
+    j3=i+3; sum3+=x[j3]*y[j3];
+    j4=i+4; sum4+=x[j4]*y[j4];
+    j5=i+5; sum5+=x[j5]*y[j5];
+    j6=i+6; sum6+=x[j6]*y[j6];
+    j7=i+7; sum7+=x[j7]*y[j7];
+  } 
+
+ /* 
+  * There may be some left to do.
+  * This could be done as a simple for() loop, 
+  * but a switch is faster (and more interesting) 
+  */ 
+
+  if(i<n){ 
+    /* Jump into the case at the place that will allow
+    * us to finish off the appropriate number of items. 
+    */ 
+
+    switch(n - i){ 
+      case 7 : sum0+=x[i]*y[i]; ++i;
+      case 6 : sum1+=x[i]*y[i]; ++i;
+      case 5 : sum2+=x[i]*y[i]; ++i;
+      case 4 : sum3+=x[i]*y[i]; ++i;
+      case 3 : sum4+=x[i]*y[i]; ++i;
+      case 2 : sum5+=x[i]*y[i]; ++i;
+      case 1 : sum6+=x[i]*y[i]; ++i;
+    }
+  } 
+
+  return sum0+sum1+sum2+sum3+sum4+sum5+sum6+sum7;
+}
+
+
+/* Compute z=x+a*y for two vectors x and y and a scalar a; z can be one of x, y.
+ * Similarly to the dot product routine, this one uses loop unrolling and blocking
+ */
+
+inline static void daxpy(int n, double *z, double *x, double a, double *y)
+{ 
+register int i, j1, j2, j3, j4, j5, j6, j7; 
+int blockn;
+
+  /* n may not be divisible by __CG_LINALG_BLOCKSIZE, 
+  * go as near as we can first, then tidy up.
+  */ 
+  blockn = (n / __CG_LINALG_BLOCKSIZE) * __CG_LINALG_BLOCKSIZE; 
+
+  /* unroll the loop in blocks of `__CG_LINALG_BLOCKSIZE' */ 
+  for(i=0; i<blockn; i+=__CG_LINALG_BLOCKSIZE){
+            z[i]=x[i]+a*y[i];
+    j1=i+1; z[j1]=x[j1]+a*y[j1];
+    j2=i+2; z[j2]=x[j2]+a*y[j2];
+    j3=i+3; z[j3]=x[j3]+a*y[j3];
+    j4=i+4; z[j4]=x[j4]+a*y[j4];
+    j5=i+5; z[j5]=x[j5]+a*y[j5];
+    j6=i+6; z[j6]=x[j6]+a*y[j6];
+    j7=i+7; z[j7]=x[j7]+a*y[j7];
+  } 
+
+ /* 
+  * There may be some left to do.
+  * This could be done as a simple for() loop, 
+  * but a switch is faster (and more interesting) 
+  */ 
+
+  if(i<n){ 
+    /* Jump into the case at the place that will allow
+    * us to finish off the appropriate number of items. 
+    */ 
+
+    switch(n - i){ 
+      case 7 : z[i]=x[i]+a*y[i]; ++i;
+      case 6 : z[i]=x[i]+a*y[i]; ++i;
+      case 5 : z[i]=x[i]+a*y[i]; ++i;
+      case 4 : z[i]=x[i]+a*y[i]; ++i;
+      case 3 : z[i]=x[i]+a*y[i]; ++i;
+      case 2 : z[i]=x[i]+a*y[i]; ++i;
+      case 1 : z[i]=x[i]+a*y[i]; ++i;
+    }
+  } 
+}
+
+/*
+ * This function returns the solution of Ax = b where A is posititive definite,
+ * based on the conjugate gradients method; see "An intro to the CG method" by J.R. Shewchuk, p. 50-51
+ *
+ * A is mxm, b, x are is mx1. Argument niter specifies the maximum number of 
+ * iterations and eps is the desired solution accuracy. niter<0 signals that
+ * x contains a valid initial approximation to the solution; if niter>0 then 
+ * the starting point is taken to be zero. Argument prec selects the desired
+ * preconditioning method as follows:
+ * 0: no preconditioning
+ * 1: jacobi (diagonal) preconditioning
+ * 2: SSOR preconditioning
+ * Argument iscolmaj specifies whether A is stored in column or row major order.
+ *
+ * The function returns 0 in case of error,
+ * the number of iterations performed if successfull
+ *
+ * This function is often called repetitively to solve problems of identical
+ * dimensions. To avoid repetitive malloc's and free's, allocated memory is
+ * retained between calls and free'd-malloc'ed when not of the appropriate size.
+ */
+int sba_Axb_CG(double *A, double *B, double *x, int m, int niter, double eps, int prec, int iscolmaj)
+{
+static double *buf=NULL;
+static int buf_sz=0;
+
+register int i, j;
+register double *aim;
+int iter, a_sz, res_sz, d_sz, q_sz, s_sz, wk_sz, z_sz, tot_sz;
+double *a, *res, *d, *q, *s, *wk, *z;
+double delta0, deltaold, deltanew, alpha, beta, eps_sq=eps*eps;
+register double sum;
+int rec_res;
+
+  /* calculate required memory size */
+  a_sz=(iscolmaj)? m*m : 0;
+	res_sz=m; d_sz=m; q_sz=m;
+  if(prec!=SBA_CG_NOPREC){
+    s_sz=m; wk_sz=m;
+    z_sz=(prec==SBA_CG_SSOR)? m : 0;
+  }
+  else
+    s_sz=wk_sz=z_sz=0;
+ 
+	tot_sz=a_sz+res_sz+d_sz+q_sz+s_sz+wk_sz+z_sz;
+
+  if(tot_sz>buf_sz){ /* insufficient memory, allocate a "big" memory chunk at once */
+    if(buf) free(buf); /* free previously allocated memory */
+
+    buf_sz=tot_sz;
+    buf=(double *)malloc(buf_sz*sizeof(double));
+    if(!buf){
+		  fprintf(stderr, "memory allocation request failed in sba_Axb_CG()\n");
+		  exit(1);
+	  }
+  }
+
+  if(iscolmaj){ 
+    a=buf;
+    /* store A (row major!) into a */
+    for(i=0; i<m; ++i)
+      for(j=0, aim=a+i*m; j<m; ++j)
+        aim[j]=A[i+j*m];
+  }
+  else a=A; /* no copying required */
+
+	res=buf+a_sz;
+	d=res+res_sz;
+	q=d+d_sz;
+  if(prec!=SBA_CG_NOPREC){
+	  s=q+q_sz;
+    wk=s+s_sz;
+    z=(prec==SBA_CG_SSOR)? wk+wk_sz : NULL;
+
+    for(i=0; i<m; ++i){ // compute jacobi (i.e. diagonal) preconditioners and save them in wk
+      sum=a[i*m+i];
+      if(sum>DBL_EPSILON || -sum<-DBL_EPSILON) // != 0.0
+        wk[i]=1.0/sum;
+      else
+        wk[i]=1.0/DBL_EPSILON;
+    }
+  }
+  else{
+    s=res;
+    wk=z=NULL;
+  }
+
+  if(niter>0)
+	  for(i=0; i<m; ++i){ // clear solution and initialize residual vector:  res <-- B
+		  x[i]=0.0;
+      res[i]=B[i];
+    }
+  else{
+    niter=-niter;
+
+	  for(i=0; i<m; ++i){ // initialize residual vector:  res <-- B - A*x
+      for(j=0, aim=a+i*m, sum=0.0; j<m; ++j)
+        sum+=aim[j]*x[j];
+      res[i]=B[i]-sum;
+    }
+  }
+
+  switch(prec){
+    case SBA_CG_NOPREC:
+      for(i=0, deltanew=0.0; i<m; ++i){
+        d[i]=res[i];
+        deltanew+=res[i]*res[i];
+      }
+      break;
+    case SBA_CG_JACOBI: // jacobi preconditioning
+      for(i=0, deltanew=0.0; i<m; ++i){
+        d[i]=res[i]*wk[i];
+        deltanew+=res[i]*d[i];
+      }
+      break;
+    case SBA_CG_SSOR: // SSOR preconditioning; see the "templates" book, fig. 3.2, p. 44
+      for(i=0; i<m; ++i){
+        for(j=0, sum=0.0, aim=a+i*m; j<i; ++j)
+          sum+=aim[j]*z[j];
+        z[i]=wk[i]*(res[i]-sum);
+      }
+
+      for(i=m-1; i>=0; --i){
+        for(j=i+1, sum=0.0, aim=a+i*m; j<m; ++j)
+          sum+=aim[j]*d[j];
+        d[i]=z[i]-wk[i]*sum;
+      }
+      deltanew=dprod(m, res, d);
+      break;
+    default:
+      fprintf(stderr, "unknown preconditioning option %d in sba_Axb_CG\n", prec);
+      exit(1);
+  }
+
+  delta0=deltanew;
+
+	for(iter=1; deltanew>eps_sq*delta0 && iter<=niter; ++iter){
+    for(i=0; i<m; ++i){ // q <-- A d
+      aim=a+i*m;
+/***
+      for(j=0, sum=0.0; j<m; ++j)
+        sum+=aim[j]*d[j];
+***/
+      q[i]=dprod(m, aim, d); //sum;
+    }
+
+/***
+    for(i=0, sum=0.0; i<m; ++i)
+      sum+=d[i]*q[i];
+***/
+    alpha=deltanew/dprod(m, d, q); // deltanew/sum;
+
+/***
+    for(i=0; i<m; ++i)
+      x[i]+=alpha*d[i];
+***/
+    daxpy(m, x, x, alpha, d);
+
+    if(!(iter%50)){
+	    for(i=0; i<m; ++i){ // accurate computation of the residual vector
+        aim=a+i*m;
+/***
+        for(j=0, sum=0.0; j<m; ++j)
+          sum+=aim[j]*x[j];
+***/
+        res[i]=B[i]-dprod(m, aim, x); //B[i]-sum;
+      }
+      rec_res=0;
+    }
+    else{
+/***
+	    for(i=0; i<m; ++i) // approximate computation of the residual vector
+        res[i]-=alpha*q[i];
+***/
+      daxpy(m, res, res, -alpha, q);
+      rec_res=1;
+    }
+
+    if(prec){
+      switch(prec){
+      case SBA_CG_JACOBI: // jacobi
+        for(i=0; i<m; ++i)
+          s[i]=res[i]*wk[i];
+        break;
+      case SBA_CG_SSOR: // SSOR
+        for(i=0; i<m; ++i){
+          for(j=0, sum=0.0, aim=a+i*m; j<i; ++j)
+            sum+=aim[j]*z[j];
+          z[i]=wk[i]*(res[i]-sum);
+        }
+
+        for(i=m-1; i>=0; --i){
+          for(j=i+1, sum=0.0, aim=a+i*m; j<m; ++j)
+            sum+=aim[j]*s[j];
+          s[i]=z[i]-wk[i]*sum;
+        }
+        break;
+      }
+    }
+
+    deltaold=deltanew;
+/***
+	  for(i=0, sum=0.0; i<m; ++i)
+      sum+=res[i]*s[i];
+***/
+    deltanew=dprod(m, res, s); //sum;
+
+    /* make sure that we get around small delta that are due to
+     * accumulated floating point roundoff errors
+     */
+    if(rec_res && deltanew<=eps_sq*delta0){
+      /* analytically  recompute delta */
+	    for(i=0; i<m; ++i){
+        for(j=0, aim=a+i*m, sum=0.0; j<m; ++j)
+          sum+=aim[j]*x[j];
+        res[i]=B[i]-sum;
+      }
+      deltanew=dprod(m, res, s);
+    }
+
+    beta=deltanew/deltaold;
+
+/***
+	  for(i=0; i<m; ++i)
+      d[i]=s[i]+beta*d[i];
+***/
+    daxpy(m, d, s, beta, d);
+  }
+
+	return iter;
 }

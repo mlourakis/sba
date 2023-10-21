@@ -44,6 +44,13 @@ struct wrap_mot_data_ {
   void *adata;
 };
 
+struct wrap_str_data_ {
+  void (*proj)(int j, int i, double *bi, double *xij, void *adata); // Q
+  void (*projac)(int j, int i, double *bi, double *Bij, void *adata); // dQ/db
+  int pnp, mnp; /* parameter numbers */
+  void *adata;
+};
+
 /* Routines to estimate the estimated measurement vector (i.e. "func") and
  * its sparse jacobian (i.e. "fjac") needed by BA expert drivers. Code below
  * makes use of user-supplied functions computing "Q", "dQ/da", d"Q/db",
@@ -194,30 +201,32 @@ static void sba_motstr_Qs_fdjac(
   }
   hxxij=hxij+mnp;
 
-  /* compute A_ij */
-  for(j=0; j<m; ++j){
-    paj=pa+j*cnp; // j-th camera parameters
+  if(cnp){ // is motion varying?
+    /* compute A_ij */
+    for(j=0; j<m; ++j){
+      paj=pa+j*cnp; // j-th camera parameters
 
-    nnz=sba_crsm_col_elmidxs(idxij, j, rcidxs, rcsubs); /* find nonzero A_ij, i=0...n-1 */
-    for(jj=0; jj<cnp; ++jj){
-      /* determine d=max(SBA_DELTA_SCALE*|paj[jj]|, SBA_MIN_DELTA), see HZ */
-      d=(double)(SBA_DELTA_SCALE)*paj[jj]; // force evaluation
-      d=FABS(d);
-      if(d<SBA_MIN_DELTA) d=SBA_MIN_DELTA;
-      d1=1.0/d; /* invert so that divisions can be carried out faster as multiplications */
+      nnz=sba_crsm_col_elmidxs(idxij, j, rcidxs, rcsubs); /* find nonzero A_ij, i=0...n-1 */
+      for(jj=0; jj<cnp; ++jj){
+        /* determine d=max(SBA_DELTA_SCALE*|paj[jj]|, SBA_MIN_DELTA), see HZ */
+        d=(double)(SBA_DELTA_SCALE)*paj[jj]; // force evaluation
+        d=FABS(d);
+        if(d<SBA_MIN_DELTA) d=SBA_MIN_DELTA;
+        d1=1.0/d; /* invert so that divisions can be carried out faster as multiplications */
 
-      for(i=0; i<nnz; ++i){
-        pbi=pb + rcsubs[i]*pnp; // i-th point parameters
-        (*proj)(j, rcsubs[i], paj, pbi, hxij, adata); // evaluate supplied function on current solution
+        for(i=0; i<nnz; ++i){
+          pbi=pb + rcsubs[i]*pnp; // i-th point parameters
+          (*proj)(j, rcsubs[i], paj, pbi, hxij, adata); // evaluate supplied function on current solution
 
-        tmp=paj[jj];
-        paj[jj]+=d;
-        (*proj)(j, rcsubs[i], paj, pbi, hxxij, adata);
-        paj[jj]=tmp; /* restore */
+          tmp=paj[jj];
+          paj[jj]+=d;
+          (*proj)(j, rcsubs[i], paj, pbi, hxxij, adata);
+          paj[jj]=tmp; /* restore */
 
-        pAB=jaca + idxij->val[rcidxs[i]]*Asz; // set pAB to point to A_ij
-        for(ii=0; ii<mnp; ++ii)
-          pAB[ii*cnp+jj]=(hxxij[ii]-hxij[ii])*d1;
+          pAB=jaca + idxij->val[rcidxs[i]]*Asz; // set pAB to point to A_ij
+          for(ii=0; ii<mnp; ++ii)
+            pAB[ii*cnp+jj]=(hxxij[ii]-hxij[ii])*d1;
+        }
       }
     }
   }
@@ -270,7 +279,8 @@ static void sba_mot_Qs(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsu
   register int i, j;
   int cnp, mnp; 
   double *paj, *pxij;
-  int /* n,*/ m, nnz;
+  //int n;
+  int m, nnz;
   struct wrap_mot_data_ *wdata;
   void (*proj)(int j, int i, double *aj, double *xij, void *proj_adata);
   void *proj_adata;
@@ -310,7 +320,8 @@ static void sba_mot_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, int *
   register int i, j;
   int cnp, mnp;
   double *paj, *jaca, *pAij;
-  int /* n,*/ m, nnz, Asz, idx;
+  //int n;
+  int m, nnz, Asz, idx;
   struct wrap_mot_data_ *wdata;
   void (*projac)(int j, int i, double *aj, double *Aij, void *projac_adata);
   void *projac_adata;
@@ -415,6 +426,170 @@ static void sba_mot_Qs_fdjac(
         pA=jaca + idxij->val[rcidxs[i]]*Asz; // set pA to point to A_ij
         for(ii=0; ii<mnp; ++ii)
           pA[ii*cnp+jj]=(hxxij[ii]-hxij[ii])*d1;
+      }
+    }
+  }
+
+  free(hxij);
+}
+
+/* BUNDLE ADJUSTMENT FOR STRUCTURE PARAMETERS ONLY */
+
+/* Given a parameter vector p made up of the 3D coordinates of n points, compute in
+ * hx the prediction of the measurements, i.e. the projections of 3D points in the m images. The measurements
+ * are returned in the order (hx_11^T, .. hx_1m^T, ..., hx_n1^T, .. hx_nm^T)^T, where hx_ij is the predicted
+ * projection of the i-th point on the j-th camera.
+ * Caller supplies rcidxs and rcsubs which can be used as working memory.
+ * Notice that depending on idxij, some of the hx_ij might be missing
+ *
+ */
+static void sba_str_Qs(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata)
+{
+  register int i, j;
+  int pnp, mnp; 
+  double *pbi, *pxij;
+  //int n;
+  int m, nnz;
+  struct wrap_str_data_ *wdata;
+  void (*proj)(int j, int i, double *bi, double *xij, void *proj_adata);
+  void *proj_adata;
+
+  wdata=(struct wrap_str_data_ *)adata;
+  pnp=wdata->pnp; mnp=wdata->mnp;
+  proj=wdata->proj;
+  proj_adata=wdata->adata;
+
+  //n=idxij->nr;
+  m=idxij->nc;
+
+  for(j=0; j<m; ++j){
+    nnz=sba_crsm_col_elmidxs(idxij, j, rcidxs, rcsubs); /* find nonzero hx_ij, i=0...n-1 */
+
+    for(i=0; i<nnz; ++i){
+      pbi=p + rcsubs[i]*pnp;
+      pxij=hx + idxij->val[rcidxs[i]]*mnp; // set pxij to point to hx_ij
+
+      (*proj)(j, rcsubs[i], pbi, pxij, proj_adata); // evaluate Q in pxij
+    }
+  }
+}
+
+/* Given a parameter vector p made up of the 3D coordinates of n points, compute in
+ * jac the jacobian of the predicted measurements, i.e. the jacobian of the projections of 3D points in the m images.
+ * The jacobian is returned in the order (B_11, ..., B_1m, ..., B_n1, ..., B_nm), where B_ij=dx_ij/db_i (see HZ).
+ * Caller supplies rcidxs and rcsubs which can be used as working memory.
+ * Notice that depending on idxij, some of the B_ij might be missing
+ *
+ */
+static void sba_str_Qs_jac(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata)
+{
+  register int i, j;
+  int pnp, mnp;
+  double *pbi, *pBij;
+  //int n;
+  int m, nnz, Bsz, idx;
+  struct wrap_str_data_ *wdata;
+  void (*projac)(int j, int i, double *bi, double *Bij, void *projac_adata);
+  void *projac_adata;
+
+  
+  wdata=(struct wrap_str_data_ *)adata;
+  pnp=wdata->pnp; mnp=wdata->mnp;
+  projac=wdata->projac;
+  projac_adata=wdata->adata;
+
+  //n=idxij->nr;
+  m=idxij->nc;
+  Bsz=mnp*pnp;
+
+  for(j=0; j<m; ++j){
+
+    nnz=sba_crsm_col_elmidxs(idxij, j, rcidxs, rcsubs); /* find nonzero hx_ij, i=0...n-1 */
+
+    for(i=0; i<nnz; ++i){
+      pbi=p + rcsubs[i]*pnp;
+      idx=idxij->val[rcidxs[i]];
+      pBij=jac + idx*Bsz; // set pBij to point to B_ij
+
+      (*projac)(j, rcsubs[i], pbi, pBij, projac_adata); // evaluate dQ/db in pBij
+    }
+  }
+}
+
+/* Given a parameter vector p made up of the 3D coordinates of n points, compute in
+ * jac the jacobian of the predicted measurements, i.e. the jacobian of the projections of 3D points in the m images.
+ * The jacobian is approximated with the aid of finite differences and is returned in the order
+ * (B_11, ..., B_1m, ..., B_n1, ..., B_nm), where B_ij=dx_ij/db_i (see HZ).
+ * Notice that depending on idxij, some of the B_ij might be missing
+ *
+ * Problem-specific information is assumed to be stored in a structure pointed to by "dat".
+ *
+ * NOTE: This function is provided mainly for illustration purposes; in case that execution time is a concern,
+ * the jacobian should be computed analytically
+ */
+static void sba_str_Qs_fdjac(
+    double *p,                /* I: current parameter estimate, (n*pnp)x1 */
+    struct sba_crsm *idxij,   /* I: sparse matrix containing the location of x_ij in hx */
+    int    *rcidxs,           /* work array for the indexes of nonzero elements of a single sparse matrix row/column */
+    int    *rcsubs,           /* work array for the subscripts of nonzero elements in a single sparse matrix row/column */
+    double *jac,              /* O: array for storing the approximated jacobian */
+    void   *dat)              /* I: points to a "wrap_str_data_" structure */
+{
+  register int i, j, ii, jj;
+  double *pbi;
+  register double *pB;
+  //int m;
+  int n, nnz, Bsz;
+
+  double tmp;
+  register double d, d1;
+
+  struct wrap_str_data_ *fdjd;
+  void (*proj)(int j, int i, double *bi, double *xij, void *adata);
+  double *hxij, *hxxij;
+  int pnp, mnp;
+  void *adata;
+
+  /* retrieve problem-specific information passed in *dat */
+  fdjd=(struct wrap_str_data_ *)dat;
+  proj=fdjd->proj;
+  pnp=fdjd->pnp; mnp=fdjd->mnp;
+  adata=fdjd->adata;
+
+  n=idxij->nr;
+  //m=idxij->nc;
+  Bsz=mnp*pnp;
+
+  /* allocate memory for hxij, hxxij */
+  if((hxij=malloc(2*mnp*sizeof(double)))==NULL){
+    fprintf(stderr, "memory allocation request failed in sba_str_Qs_fdjac()!\n");
+    exit(1);
+  }
+  hxxij=hxij+mnp;
+
+  /* compute B_ij */
+  for(i=0; i<n; ++i){
+    pbi=p+i*pnp; // i-th point parameters
+
+    nnz=sba_crsm_row_elmidxs(idxij, i, rcidxs, rcsubs); /* find nonzero B_ij, j=0...m-1 */
+    for(jj=0; jj<pnp; ++jj){
+      /* determine d=max(SBA_DELTA_SCALE*|pbi[jj]|, SBA_MIN_DELTA), see HZ */
+      d=(double)(SBA_DELTA_SCALE)*pbi[jj]; // force evaluation
+      d=FABS(d);
+      if(d<SBA_MIN_DELTA) d=SBA_MIN_DELTA;
+      d1=1.0/d; /* invert so that divisions can be carried out faster as multiplications */
+
+      for(j=0; j<nnz; ++j){
+        (*proj)(rcsubs[j], i, pbi, hxij, adata); // evaluate supplied function on current solution
+
+        tmp=pbi[jj];
+        pbi[jj]+=d;
+        (*proj)(rcsubs[j], i, pbi, hxxij, adata);
+        pbi[jj]=tmp; /* restore */
+
+        pB=jac + idxij->val[rcidxs[j]]*Bsz; // set pB to point to B_ij
+        for(ii=0; ii<mnp; ++ii)
+          pB[ii*pnp+jj]=(hxxij[ii]-hxij[ii])*d1;
       }
     }
   }
@@ -545,9 +720,9 @@ int sba_mot_levmar(
                                                */
     void (*projac)(int j, int i, double *aj, double *Aij, void *adata),
                                               /* functional relation to evaluate d x_ij / d a_j in Aij 
-                                               * This function is called only if point i is visible in * image j
-                                               * (i.e. vmask[i][j]==1). Also, A_ij is a mnp x cnp matrix and should
-                                               * be stored in row-major order.
+                                               * This function is called only if point i is visible in image j
+                                               * (i.e. vmask[i][j]==1). Also, A_ij are a mnp x cnp matrices
+                                               * and should be stored in row-major order.
                                                *
                                                * If NULL, the jacobian is approximated by repetitive proj calls
                                                * and finite differences. 
@@ -587,6 +762,91 @@ void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double
 
   fjac=(projac)? sba_mot_Qs_jac : sba_mot_Qs_fdjac;
   retval=sba_mot_levmar_x(n, m, mcon, vmask, p, cnp, x, mnp, sba_mot_Qs, fjac, &wdata, itmax, verbose, opts, info);
+
+  if(info){
+    register int i;
+    int nvis;
+
+    /* count visible image points */
+    for(i=nvis=0; i<n*m; ++i)
+      nvis+=vmask[i];
+
+    /* each "func" & "fjac" evaluation requires nvis "proj" & "projac" evaluations */
+    info[7]*=nvis;
+    info[8]*=nvis;
+  }
+
+  return retval;
+}
+
+/* 
+ * Simple driver to sba_str_levmar_x for bundle adjustment on structure parameters.
+ */
+
+int sba_str_levmar(
+    const int n,   /* number of points */
+    const int m,   /* number of images */
+    char *vmask,  /* visibility mask: vmask[i][j]=1 if point i visible in image j, 0 otherwise. nxm */
+    double *p,    /* initial parameter vector p0: (b1, ..., bn).
+                   * bi are the i-th point parameters, size n*pnp
+                   */
+    const int pnp,/* number of parameters for ONE point; e.g. 3 for Euclidean points */
+    double *x,    /* measurements vector: (x_11^T, .. x_1m^T, ..., x_n1^T, .. x_nm^T)^T where
+                   * x_ij is the projection of the i-th point on the j-th image.
+                   * NOTE: some of the x_ij might be missing, if point i is not visible in image j;
+                   * see vmask[i][j], max. size n*m*mnp
+                   */
+    const int mnp,/* number of parameters for EACH measurement; usually 2 */
+    void (*proj)(int j, int i, double *bi, double *xij, void *adata),
+                                              /* functional relation computing a SINGLE image measurement. Assuming that
+                                               * the parameters of point i are bi, computes a prediction of \hat{x}_{ij}.
+                                               * bi is pnp x 1 and  xij is mnp x 1. This function is called only if point
+                                               * i is visible in image j (i.e. vmask[i][j]==1)
+                                               */
+    void (*projac)(int j, int i, double *bi, double *Bij, void *adata),
+                                              /* functional relation to evaluate d x_ij / d b_i in Bij.
+                                               * This function is called only if point i is visible in image j
+                                               * (i.e. vmask[i][j]==1). Also, B_ij are mnp x pnp matrices
+                                               * and they should be stored in row-major order.
+                                               *
+                                               * If NULL, the jacobians are approximated by repetitive proj calls
+                                               * and finite differences. 
+                                               */
+    void *adata,       /* pointer to possibly additional data, passed uninterpreted to proj, projac */ 
+
+    int itmax,         /* I: maximum number of iterations */
+    int verbose,       /* I: verbosity */
+    double opts[SBA_OPTSSZ],
+	                     /* I: minim. options [\mu, \epsilon1, \epsilon2]. Respectively the scale factor for initial \mu,
+                        * stoping thresholds for ||J^T e||_inf and ||dp||_2
+                        */
+    double info[SBA_INFOSZ]
+	                     /* O: information regarding the minimization. Set to NULL if don't care
+                        * info[0]=||e||_2 at initial p.
+                        * info[1-4]=[ ||e||_2, ||J^T e||_inf,  ||dp||_2, mu/max[J^T J]_ii ], all computed at estimated p.
+                        * info[5]= # iterations,
+                        * info[6]=reason for terminating: 1 - stopped by small gradient J^T e
+                        *                                 2 - stopped by small dp
+                        *                                 3 - stopped by itmax
+                        *                                 4 - singular matrix. Restart from current p with increased mu 
+                        * info[7]= # function evaluations
+                        * info[8]= # jacobian evaluations
+			                  * info[9]= # number of linear systems solved, i.e. number of attempts	for reducing error
+                        */
+)
+{
+int retval;
+struct wrap_str_data_ wdata;
+static void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata);
+
+  wdata.proj=proj;
+  wdata.projac=projac;
+  wdata.pnp=pnp;
+  wdata.mnp=mnp;
+  wdata.adata=adata;
+
+  fjac=(projac)? sba_str_Qs_jac : sba_str_Qs_fdjac;
+  retval=sba_str_levmar_x(n, m, vmask, p, pnp, x, mnp, sba_str_Qs, fjac, &wdata, itmax, verbose, opts, info);
 
   if(info){
     register int i;

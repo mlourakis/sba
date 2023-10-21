@@ -31,7 +31,10 @@ extern "C" {
 #define SBA_INFOSZ        10
 #define SBA_INIT_MU       1E-03
 #define SBA_STOP_THRESH   1E-12
-#define SBA_VERSION       "1.0 (Sep. 2004)"
+#define SBA_CG_NOPREC     0
+#define SBA_CG_JACOBI     1
+#define SBA_CG_SSOR       2
+#define SBA_VERSION       "1.1 (Dec. 2004)"
 
 
 /* Sparse matrix representation using Compressed Row Storage (CRS) format.
@@ -52,29 +55,43 @@ struct sba_crsm{
 
 /* simple drivers */
 extern int
-sba_motstr_levmar(const int n, const int m, const int mcon, char *vmask, double *p, int const cnp, const int pnp, double *x, const int mnp,
+sba_motstr_levmar(const int n, const int m, const int mcon, char *vmask, double *p, const int cnp, const int pnp, double *x, const int mnp,
            void (*proj)(int j, int i, double *aj, double *bi, double *xij, void *adata),
            void (*projac)(int j, int i, double *aj, double *bi, double *Aij, double *Bij, void *adata),
-           void *adata, int itmax, int verbose, double opts[3], double info[10]);
+           void *adata, int itmax, int verbose, double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
 
 extern int
-sba_mot_levmar(const int n, const int m, const int mcon, char *vmask, double *p, int const cnp, double *x, const int mnp,
+sba_mot_levmar(const int n, const int m, const int mcon, char *vmask, double *p, const int cnp, double *x, const int mnp,
            void (*proj)(int j, int i, double *aj, double *xij, void *adata),
            void (*projac)(int j, int i, double *aj, double *Aij, void *adata),
-           void *adata, int itmax, int verbose, double opts[3], double info[10]);
+           void *adata, int itmax, int verbose, double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
+
+extern int
+sba_str_levmar(const int n, const int m, char *vmask, double *p, const int pnp, double *x, const int mnp,
+           void (*proj)(int j, int i, double *bi, double *xij, void *adata),
+           void (*projac)(int j, int i, double *bi, double *Bij, void *adata),
+           void *adata, int itmax, int verbose, double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
+
 
 /* expert drivers */
 extern int
 sba_motstr_levmar_x(const int n, const int m, const int mcon, char *vmask, double *p, int const cnp, const int pnp, double *x, const int mnp,
            void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
            void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
-           void *adata, int itmax, int verbose, double opts[3], double info[10]);
+           void *adata, int itmax, int verbose, double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
 
 extern int
 sba_mot_levmar_x(const int n, const int m, const int mcon, char *vmask, double *p, int const cnp, double *x, const int mnp,
            void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
            void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
-           void *adata, int itmax, int verbose, double opts[3], double info[10]);
+           void *adata, int itmax, int verbose, double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
+
+extern int
+sba_str_levmar_x(const int n, const int m, char *vmask, double *p, const int pnp, double *x, const int mnp,
+           void (*func)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata),
+           void (*fjac)(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata),
+           void *adata, int itmax, int verbose, double opts[SBA_OPTSSZ], double info[SBA_INFOSZ]);
+
 
 /* interfaces to LAPACK routines: solution of linear systems, matrix inversion */
 extern int sba_Axb_QR(double *A, double *B, double *x, int m, int iscolmaj);
@@ -83,7 +100,9 @@ extern int sba_Axb_Chol(double *A, double *B, double *x, int m, int iscolmaj);
 extern int sba_Axb_LU(double *A, double *B, double *x, int m, int iscolmaj);
 extern int sba_Axb_SVD(double *A, double *B, double *x, int m, int iscolmaj);
 extern int sba_Axb_BK(double *A, double *B, double *x, int m, int iscolmaj);
-extern int sba_mat_invert(double *A, double *B, int m);
+extern int sba_Axb_CG(double *A, double *B, double *x, int m, int niter, double eps, int prec, int iscolmaj);
+extern int sba_mat_invert_LU(double *A, double *B, int m);
+extern int sba_mat_invert_Chol(double *A, double *B, int m);
 
 /* CRS sparse matrices manipulation routines */
 extern void sba_crsm_alloc(struct sba_crsm *sm, int nr, int nc, int nnz);

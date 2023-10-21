@@ -17,6 +17,7 @@ struct globs_{
 	double *intrcalib; /* intrinsic callibration matrix in row-major storage */
 
 	double *ptparams; /* needed only when bundle adjusting for camera parameters only */
+	double *camparams; /* needed only when bundle adjusting for structure parameters only */
 } globs;
 
 
@@ -67,7 +68,7 @@ static void img_projRTS_jac(int j, int i, double *aj, double *bi, double *Aij, d
 
 /* BUNDLE ADJUSTMENT FOR CAMERA PARAMETERS ONLY */
 
-/* Given the parameter vectors aj camera j, computes in xij the
+/* Given the parameter vector aj of camera j, computes in xij the
  * predicted projection of point i on image j
  */
 static void img_projRT(int j, int i, double *aj, double *xij, void *adata)
@@ -84,7 +85,7 @@ static void img_projRT(int j, int i, double *aj, double *xij, void *adata)
   calcImgProj(Kcalib, aj, aj+4, ptparams+i*pnp, xij); // 4 is the quaternion's length
 }
 
-/* Given the parameter vectors aj and bi of camera j and point i, computes in Aij, Bij the
+/* Given the parameter vector aj of camera j, computes in Aij
  * the jacobian of the predicted projection of point i on image j
  */
 static void img_projRT_jac(int j, int i, double *aj, double *Aij, void *adata)
@@ -101,6 +102,43 @@ static void img_projRT_jac(int j, int i, double *aj, double *Aij, void *adata)
   calcImgProjJacRTS(Kcalib, aj, aj+4, ptparams+i*pnp, (double (*)[7])Aij, NULL); // 4 is the quaternion's length
 }
 
+/* BUNDLE ADJUSTMENT FOR STRUCTURE PARAMETERS ONLY */
+
+/* Given the parameter vector bi of point i, computes in xij the
+ * predicted projection of point i on image j
+ */
+static void img_projS(int j, int i, double *bi, double *xij, void *adata)
+{
+  const int cnp=7;
+
+  double *Kcalib, *camparams, *aj;
+  struct globs_ *gl;
+
+  gl=(struct globs_ *)adata;
+  Kcalib=gl->intrcalib;
+  camparams=gl->camparams;
+  aj=camparams+j*cnp;
+
+  calcImgProj(Kcalib, aj, aj+4, bi, xij); // 4 is the quaternion's length
+}
+
+/* Given the parameter vector bi of point i, computes in Bij
+ * the jacobian of the predicted projection of point i on image j
+ */
+static void img_projS_jac(int j, int i, double *bi, double *Bij, void *adata)
+{
+  const int cnp=7;
+
+  double *Kcalib, *camparams, *aj;
+  struct globs_ *gl;
+  
+  gl=(struct globs_ *)adata;
+  Kcalib=gl->intrcalib;
+  camparams=gl->camparams;
+  aj=camparams+j*cnp;
+
+  calcImgProjJacRTS(Kcalib, aj, aj+4, bi, NULL, (double (*)[3])Bij); // 4 is the quaternion's length
+}
 
 /**********************************************************************/
 /* MEASUREMENT VECTOR AND JACOBIAN COMPUTATION FOR THE EXPERT DRIVERS */
@@ -122,13 +160,15 @@ static void img_projsRTS_x(double *p, struct sba_crsm *idxij, int *rcidxs, int *
             pnp=3, /* euclidean 3D points */
             mnp=2; /* img ponts are 2D */
   double *pa, *pb, *pqr, *pt, *ppt, *pmeas, *Kcalib;
-  int n, m, nnz;
+  //int n;
+  int m, nnz;
   struct globs_ *gl;
 
   gl=(struct globs_ *)adata;
   Kcalib=gl->intrcalib;
 
-  n=idxij->nr; m=idxij->nc;
+  //n=idxij->nr;
+  m=idxij->nc;
   pa=p; pb=p+m*cnp;
 
   for(j=0; j<m; ++j){
@@ -161,13 +201,15 @@ static void img_projsRTS_jac_x(double *p, struct sba_crsm *idxij, int *rcidxs, i
             pnp=3, /* euclidean 3D points */
             mnp=2; /* img ponts are 2D */
   double *pa, *pb, *pqr, *pt, *ppt, *jaca, *jacb, *pA, *pB, *Kcalib;
-  int n, m, nnz, Asz, Bsz, idx;
+  //int n;
+  int m, nnz, Asz, Bsz, idx;
   struct globs_ *gl;
   
   gl=(struct globs_ *)adata;
   Kcalib=gl->intrcalib;
 
-  n=idxij->nr; m=idxij->nc;
+  //n=idxij->nr;
+  m=idxij->nc;
   pa=p; pb=p+m*cnp;
   Asz=mnp*cnp; Bsz=mnp*pnp;
   jaca=jac; jacb=jac+idxij->nnz*Asz;
@@ -206,14 +248,16 @@ static void img_projsRT_x(double *p, struct sba_crsm *idxij, int *rcidxs, int *r
             pnp=3, /* euclidean 3D points */
             mnp=2; /* img ponts are 2D */
   double *pqr, *pt, *ppt, *pmeas, *Kcalib, *ptparams;
-  int n, m, nnz;
+  //int n;
+  int m, nnz;
   struct globs_ *gl;
 
   gl=(struct globs_ *)adata;
   Kcalib=gl->intrcalib;
   ptparams=gl->ptparams;
 
-  n=idxij->nr; m=idxij->nc;
+  //n=idxij->nr;
+  m=idxij->nc;
 
   for(j=0; j<m; ++j){
     /* j-th camera parameters */
@@ -245,14 +289,16 @@ static void img_projsRT_jac_x(double *p, struct sba_crsm *idxij, int *rcidxs, in
             pnp=3, /* euclidean 3D points */
             mnp=2; /* img ponts are 2D */
   double *pqr, *pt, *ppt, *pA, *Kcalib, *ptparams;
-  int n, m, nnz, Asz, idx;
+  //int n;
+  int m, nnz, Asz, idx;
   struct globs_ *gl;
   
   gl=(struct globs_ *)adata;
   Kcalib=gl->intrcalib;
   ptparams=gl->ptparams;
 
-  n=idxij->nr; m=idxij->nc;
+  //n=idxij->nr;
+  m=idxij->nc;
   Asz=mnp*cnp;
 
   for(j=0; j<m; ++j){
@@ -271,6 +317,93 @@ static void img_projsRT_jac_x(double *p, struct sba_crsm *idxij, int *rcidxs, in
     }
   }
 }
+
+/* BUNDLE ADJUSTMENT FOR STRUCTURE PARAMETERS ONLY */
+
+/* Given a parameter vector p made up of the 3D coordinates of n points and the parameters of m cameras, compute in
+ * hx the prediction of the measurements, i.e. the projections of 3D points in the m images. The measurements
+ * are returned in the order (hx_11^T, .. hx_1m^T, ..., hx_n1^T, .. hx_nm^T)^T, where hx_ij is the predicted
+ * projection of the i-th point on the j-th camera.
+ * Notice that depending on idxij, some of the hx_ij might be missing
+ *
+ */
+static void img_projsS_x(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *hx, void *adata)
+{
+  register int i, j;
+  const int cnp=7, /* 4 rot params + 3 trans params */
+            pnp=3, /* euclidean 3D points */
+            mnp=2; /* img ponts are 2D */
+  double *pqr, *pt, *ppt, *pmeas, *Kcalib, *camparams;
+  //int n;
+  int m, nnz;
+  struct globs_ *gl;
+
+  gl=(struct globs_ *)adata;
+  Kcalib=gl->intrcalib;
+  camparams=gl->camparams;
+
+  //n=idxij->nr;
+  m=idxij->nc;
+
+  for(j=0; j<m; ++j){
+    /* j-th camera parameters */
+    pqr=camparams+j*cnp;
+    pt=pqr+4; // rot. quaternion has 4 elements
+
+    nnz=sba_crsm_col_elmidxs(idxij, j, rcidxs, rcsubs); /* find nonzero hx_ij, i=0...n-1 */
+
+    for(i=0; i<nnz; ++i){
+      ppt=p + rcsubs[i]*pnp;
+      pmeas=hx + idxij->val[rcidxs[i]]*mnp; // set pmeas to point to hx_ij
+
+      calcImgProj(Kcalib, pqr, pt, ppt, pmeas); // evaluate Q in pmeas
+    }
+  }
+}
+
+/* Given a parameter vector p made up of the 3D coordinates of n points, compute in
+ * jac the jacobian of the predicted measurements, i.e. the jacobian of the projections of 3D points in the m images.
+ * The jacobian is returned in the order (B_11, ..., B_1m, ..., B_n1, ..., B_nm),
+ * where B_ij=dx_ij/db_i (see HZ).
+ * Notice that depending on idxij, some of the B_ij might be missing
+ *
+ */
+static void img_projsS_jac_x(double *p, struct sba_crsm *idxij, int *rcidxs, int *rcsubs, double *jac, void *adata)
+{
+  register int i, j;
+  const int cnp=7, /* 4 rot params + 3 trans params */
+            pnp=3, /* euclidean 3D points */
+            mnp=2; /* img ponts are 2D */
+  double *pqr, *pt, *ppt, *pB, *Kcalib, *camparams;
+  //int n;
+  int m, nnz, Bsz, idx;
+  struct globs_ *gl;
+  
+  gl=(struct globs_ *)adata;
+  Kcalib=gl->intrcalib;
+  camparams=gl->camparams;
+
+  //n=idxij->nr;
+  m=idxij->nc;
+  Bsz=mnp*pnp;
+
+  for(j=0; j<m; ++j){
+    /* j-th camera parameters */
+    pqr=camparams+j*cnp;
+    pt=pqr+4; // rot. quaternion has 4 elements
+
+    nnz=sba_crsm_col_elmidxs(idxij, j, rcidxs, rcsubs); /* find nonzero hx_ij, i=0...n-1 */
+
+    for(i=0; i<nnz; ++i){
+      ppt=p + rcsubs[i]*pnp;
+      idx=idxij->val[rcidxs[i]];
+      pB=jac + idx*Bsz; // set pB to point to B_ij
+
+      calcImgProjJacRTS(Kcalib, pqr, pt, ppt, (double (*)[7])NULL, (double (*)[3])pB); // evaluate dQ/da in pB
+    }
+  }
+}
+
 
 /* Driver for sba_xxx_levmar */
 void sba_driver(char *camsfname, char *ptsfname, char *calibfname)
@@ -296,6 +429,7 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname)
   readCalibParams(calibfname, ical); 
   globs.intrcalib=ical;
   globs.ptparams=NULL;
+  globs.camparams=NULL;
 
   /* call sparse LM routine */
   opts[0]=SBA_INIT_MU; opts[1]=SBA_TERMINATION_THRESH; opts[2]=SBA_TERMINATION_THRESH;
@@ -307,6 +441,7 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname)
    */
   howto=BA_MOTSTRUCT;
   //howto=BA_MOT;
+  //howto=BA_STRUCT;
   //howto=BA_MOT_MOTSTRUCT;
 
   /* simple or expert drivers? */
@@ -338,6 +473,17 @@ void sba_driver(char *camsfname, char *ptsfname, char *calibfname)
       else
         n=sba_mot_levmar(numpts3D, nframes, nconstframes, vmask, motstruct, cnp, imgpts, mnp,
                           img_projRT, (analyticjac)? img_projRT_jac : NULL, (void *)(&globs), 100, verbose, opts, info);
+    break;
+
+    case BA_STRUCT: /* BA for structure only */
+      globs.camparams=motstruct;
+      nvars=numpts3D*pnp;
+      if(expert)
+        n=sba_str_levmar_x(numpts3D, nframes, vmask, motstruct+nframes*cnp, pnp, imgpts, mnp,
+                          img_projsS_x, (analyticjac)? img_projsS_jac_x : NULL, (void *)(&globs), 100, verbose, opts, info);
+      else
+        n=sba_str_levmar(numpts3D, nframes, vmask, motstruct+nframes*cnp, pnp, imgpts, mnp,
+                          img_projS, (analyticjac)? img_projS_jac : NULL, (void *)(&globs), 100, verbose, opts, info);
     break;
 
     case BA_MOT_MOTSTRUCT: /* BA for motion only; if error too large, then BA for motion & structure */

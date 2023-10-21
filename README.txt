@@ -1,6 +1,6 @@
     **************************************************************
                                  SBA 
-                              version 1.0
+                              version 1.1
                           By Manolis Lourakis
 
                      Institute of Computer Science
@@ -36,7 +36,7 @@ the above TR:
     title={The Design and Implementation of a Generic Sparse Bundle Adjustment Software Package
            Based on the Levenberg-Marquardt Algorithm}
     institution={Institute of Computer Science - FORTH},
-    address={Heraklion, Greece},
+    address={Heraklion, Crete, Greece},
     number={340},
     year={2004},
     month={Aug.},

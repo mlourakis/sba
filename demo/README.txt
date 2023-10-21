@@ -55,7 +55,7 @@ produces the following output:
 
 
 For the 9 cameras case,
-  eucsbademo 7cams.txt 7pts.txt calib.txt
+  eucsbademo 9cams.txt 9pts.txt calib.txt
 produces
   SBA using 559 3D pts, 9 frames and 2422 image projections
 

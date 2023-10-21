@@ -89,7 +89,7 @@ register int i, j, k;
   sm->rowptr[nr]=nnz;
 }
 
-/* returns index of the (i, j) element. No bounds checking! */
+/* returns the index of the (i, j) element. No bounds checking! */
 int sba_crsm_elmidx(struct sba_crsm *sm, int i, int j)
 {
 register int low, high, mid;
@@ -99,6 +99,8 @@ register int low, high, mid;
 
   /* binary search for finding the element at column j */
   while(low<=high){
+    if(j<sm->colidx[low] || j>sm->colidx[high]) return -1; /* not found */
+    
     mid=(low+high)>>1; //(low+high)/2;
     if(j<sm->colidx[mid])
         high=mid-1;
@@ -135,22 +137,35 @@ register int j, k;
  */
 int sba_crsm_col_elmidxs(struct sba_crsm *sm, int j, int *vidxs, int *iidxs)
 {
-register int i, k, l;
 register int *nextrowptr=sm->rowptr+1;
+register int i, l;
+register int low, high, mid;
 
-  for(k=i=l=0; k<sm->nnz; ++k){
-    if(k==nextrowptr[i]) ++i; // nextrowptr[i] == sm->rowptr[i+1]
+  for(i=l=0; i<sm->nr; ++i){
+    low=sm->rowptr[i];
+    high=nextrowptr[i]-1;
 
-    if(sm->colidx[k]==j){
-      vidxs[l]=k;
-      iidxs[l++]=i;
+    /* binary search attempting to find an element at column j */
+    while(low<=high){
+      if(j<sm->colidx[low] || j>sm->colidx[high]) break; /* not found */
+
+      mid=(low+high)>>1; //(low+high)/2;
+      if(j<sm->colidx[mid])
+          high=mid-1;
+      else if(j>sm->colidx[mid])
+          low=mid+1;
+      else{ /* found */
+        vidxs[l]=mid;
+        iidxs[l++]=i;
+        break;
+      }
     }
   }
 
   return l;
 }
 
-/* a more straighforward implementation of the above function */
+/* a more straighforward (but slower) implementation of the above function */
 /***
 int sba_crsm_col_elmidxs(struct sba_crsm *sm, int j, int *vidxs, int *iidxs)
 {
